@@ -10,26 +10,33 @@
  * - signInWithApple()
  *
  * OAuth (Google/Apple):
- * - Expo Go → useProxy: true → https://auth.expo.io/@username/slug/auth/callback
- * - Dev build / Standalone → useProxy: false → lexilevel://auth/callback
+ * - Expo Go → fixed proxy redirect → https://auth.expo.io/@bill_lava/LexiLevel
+ * - Dev build / Standalone → lexilevel://auth/callback
  *
  * IMPORTANT:
- * - Add "scheme": "lexilevel" to app.json
- * - Add both Redirect URLs in Supabase:
- *   - https://auth.expo.io/@bill_lava/LexiLevel/auth/callback
- *   - lexilevel://auth/callback
- *   (+ optional: lexilevel://)
+ * - app.json must include: { "expo": { "scheme": "lexilevel" } }
+ * - Supabase → Auth → URL Configuration:
+ *   - Site URL (for Expo Go dev): https://auth.expo.io/@bill_lava/LexiLevel
+ *   - Additional Redirect URLs:
+ *       https://auth.expo.io/@bill_lava/LexiLevel
+ *       lexilevel://auth/callback
+ *       lexilevel://
  */
 
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
+import * as Crypto from "expo-crypto";
 
 import { supabase } from "../config/supabase";
 
 const AuthContext = createContext(null);
 
+// Expo Go detection
 const isExpoGo = Constants.appOwnership === "expo";
+
+// ✅ Fixed proxy redirect for Expo Go to avoid localhost / --/ path variations
+const EXPO_PROXY_REDIRECT = "https://auth.expo.io/@bill_lava/LexiLevel";
 
 function friendlyAuthError(err) {
   const msg = err?.message || "Auth error";
@@ -39,21 +46,29 @@ function friendlyAuthError(err) {
   if (/Password should be at least/i.test(msg)) return "Пароль має бути мінімум 6 символів";
   if (/Email not confirmed/i.test(msg)) return "Підтвердіть email у листі (якщо увімкнено підтвердження)";
   if (/OAuth was cancelled/i.test(msg)) return "Вхід скасовано";
+
+  // Common redirect whitelist errors
   if (/redirect/i.test(msg) && /not allowed|not permitted|invalid/i.test(msg)) {
     return "Redirect URL не дозволений. Перевір Redirect URLs у Supabase.";
   }
+
   return msg;
 }
 
 async function ensureOAuthDeps() {
   try {
-    const WebBrowser = await import("expo-web-browser");
-    const AuthSession = await import("expo-auth-session");
+    const WebBrowserMod = await import("expo-web-browser");
+    const AuthSessionMod = await import("expo-auth-session");
+
+    // Dynamic import інколи кладе експорт у .default
+    const WebBrowser = WebBrowserMod?.default ?? WebBrowserMod;
+    const AuthSession = AuthSessionMod?.default ?? AuthSessionMod;
+
     return { WebBrowser, AuthSession };
-  } catch (e) {
+  } catch (_e) {
     const help =
       "Для входу через Google/Apple встанови пакети:\n" +
-      "  npx expo install expo-auth-session expo-web-browser\n" +
+      "  npx expo install expo-auth-session expo-web-browser expo-crypto\n" +
       "і налаштуй Redirect URLs у Supabase (Auth → URL Configuration).";
     const err = new Error(help);
     err.code = "OAUTH_DEPS_MISSING";
@@ -61,37 +76,53 @@ async function ensureOAuthDeps() {
   }
 }
 
+function getRedirectTo(AuthSession) {
+  if (isExpoGo) return EXPO_PROXY_REDIRECT;
+
+  // Dev build / standalone
+  return AuthSession.makeRedirectUri({
+    scheme: "lexilevel",
+    path: "auth/callback",
+    preferLocalhost: false,
+  });
+}
+
 async function signInWithOAuthProvider(provider) {
   const { WebBrowser, AuthSession } = await ensureOAuthDeps();
 
-  // Required for iOS to close Safari view correctly after auth.
   WebBrowser.maybeCompleteAuthSession?.();
 
-  const redirectTo = AuthSession.makeRedirectUri({
-    useProxy: isExpoGo,          // Expo Go: true, Dev build: false
-    scheme: "lexilevel",         // for dev build/standalone
-    path: "auth/callback",
-  });
+  const redirectTo = getRedirectTo(AuthSession);
+
+  // 🔎 Debug if needed:
+  console.log("isExpoGo:", isExpoGo);
+  console.log("redirectTo:", redirectTo);
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider,
-    options: { redirectTo },
+    options: {
+      redirectTo,
+      skipBrowserRedirect: true,
+    },
   });
 
   if (error) throw error;
   if (!data?.url) throw new Error("OAuth URL was not returned");
 
-  const result = await AuthSession.startAsync({
-    authUrl: data.url,
-    returnUrl: redirectTo,
-  });
+  // 🔎 Debug if needed:
+  // console.log("supabase oauth url:", data.url);
 
-  if (result.type !== "success") {
+  const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+
+  if (res.type !== "success" || !res.url) {
     throw new Error("OAuth was cancelled");
   }
 
-  // Session will be picked up by onAuthStateChange after redirect.
-  return true;
+  // PKCE: exchange code for session
+  const { data: exchanged, error: exErr } = await supabase.auth.exchangeCodeForSession(res.url);
+  if (exErr) throw exErr;
+
+  return exchanged?.session ?? true;
 }
 
 export function AuthProvider({ children }) {
