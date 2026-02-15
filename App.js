@@ -1,31 +1,47 @@
 /**
- * App.js — Головний файл додатка LexiLevel
- * 
- * Це "точка входу" — перше, що запускається коли ви відкриваєте додаток.
- * Тут ми підключаємо навігацію (перехід між екранами) та провайдер авторизації.
+ * App.js — Entry point for LexiLevel
+ *
+ * Guard:
+ * - If user is NOT logged in → show AuthScreen
+ * - If user IS logged in → show TabNavigator
+ *
+ * Auth is powered by Supabase Auth (email+password + OAuth providers).
  */
 
-import React from 'react';
-import { StatusBar } from 'expo-status-bar';
-import { NavigationContainer } from '@react-navigation/native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import TabNavigator from './src/navigation/TabNavigator';
-import { AuthProvider } from './src/hooks/useAuth';
+import React from "react";
+import { StatusBar } from "expo-status-bar";
+import { NavigationContainer } from "@react-navigation/native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { View, ActivityIndicator } from "react-native";
+
+import TabNavigator from "./src/navigation/TabNavigator";
+import AuthScreen from "./src/screens/AuthScreen";
+import { AuthProvider, useAuth } from "./src/hooks/useAuth";
+import { COLORS } from "./src/utils/constants";
+
+function Root() {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.background }}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
+
+  return user ? <TabNavigator /> : <AuthScreen />;
+}
 
 export default function App() {
   return (
-    // SafeAreaProvider — забезпечує правильні відступи від "чубчика" iPhone
     <SafeAreaProvider>
-      {/* AuthProvider — обгортка, яка дає доступ до даних користувача на всіх екранах */}
       <AuthProvider>
-        {/* NavigationContainer — контейнер для всієї навігації */}
         <NavigationContainer>
-          {/* TabNavigator — нижня панель з вкладками (Translate, Lists, Practice, Profile) */}
-          <TabNavigator />
+          <Root />
         </NavigationContainer>
+        <StatusBar style="dark" />
       </AuthProvider>
-      {/* StatusBar — верхня панель з часом, батареєю тощо (стиль: темний текст на світлому фоні) */}
-      <StatusBar style="dark" />
     </SafeAreaProvider>
   );
 }
