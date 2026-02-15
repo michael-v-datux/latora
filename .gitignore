@@ -1,0 +1,25 @@
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# Environment variables (API keys!)
+.env
+
+# Native builds
+ios/
+android/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+*.swp
+*.swo
+
+# Testing
+coverage/
