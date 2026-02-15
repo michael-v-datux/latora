@@ -1,99 +1,187 @@
 /**
- * useAuth.js — Хук авторизації
- * 
- * "Хук" (hook) — це спосіб додати функціональність до React-компонентів.
- * Цей хук відповідає за:
- * - відстеження чи користувач увійшов в систему
- * - реєстрацію нового користувача
- * - вхід / вихід з акаунта
- * 
- * Використання в будь-якому компоненті:
- *   const { user, signIn, signUp, signOut } = useAuth();
+ * useAuth.js — Supabase Auth hook + provider
+ *
+ * Provides:
+ * - user, session, loading
+ * - signUp(email, password)
+ * - signIn(email, password)
+ * - signOut()
+ * - signInWithGoogle()
+ * - signInWithApple()
+ *
+ * OAuth (Google/Apple):
+ * - Expo Go → useProxy: true → https://auth.expo.io/@username/slug/auth/callback
+ * - Dev build / Standalone → useProxy: false → lexilevel://auth/callback
+ *
+ * IMPORTANT:
+ * - Add "scheme": "lexilevel" to app.json
+ * - Add both Redirect URLs in Supabase:
+ *   - https://auth.expo.io/@bill_lava/LexiLevel/auth/callback
+ *   - lexilevel://auth/callback
+ *   (+ optional: lexilevel://)
  */
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { supabase } from '../config/supabase';
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { Platform } from "react-native";
+import Constants from "expo-constants";
 
-// Контекст — це "глобальне сховище", доступне всім компонентам
-const AuthContext = createContext({});
+import { supabase } from "../config/supabase";
 
-/**
- * AuthProvider — обгортка, яку ми ставимо в App.js
- * Вона відстежує стан авторизації та передає його дочірнім компонентам.
- */
-export function AuthProvider({ children }) {
-  // useState — зберігає значення, яке може змінюватись
-  const [user, setUser] = useState(null);         // дані користувача (або null якщо не увійшов)
-  const [loading, setLoading] = useState(true);    // чи завантажується перевірка авторизації
-  const [session, setSession] = useState(null);    // дані сесії (токен доступу)
+const AuthContext = createContext(null);
 
-  // useEffect — виконується один раз при завантаженні додатка
-  useEffect(() => {
-    // Перевіряємо чи є збережена сесія (чи користувач вже був залогінений)
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
+const isExpoGo = Constants.appOwnership === "expo";
 
-    // Підписуємось на зміни авторизації (логін, логаут, оновлення токена)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
-      }
-    );
+function friendlyAuthError(err) {
+  const msg = err?.message || "Auth error";
 
-    // Відписуємось коли компонент знищується (запобігає витокам пам'яті)
-    return () => subscription.unsubscribe();
-  }, []);
-
-  /**
-   * Реєстрація нового користувача
-   * @param {string} email — електронна пошта
-   * @param {string} password — пароль (мін. 6 символів)
-   */
-  const signUp = async (email, password) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-    if (error) throw error;
-    return data;
-  };
-
-  /**
-   * Вхід існуючого користувача
-   */
-  const signIn = async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (error) throw error;
-    return data;
-  };
-
-  /**
-   * Вихід з акаунта
-   */
-  const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-  };
-
-  // Передаємо всі дані та функції через контекст
-  return (
-    <AuthContext.Provider value={{ user, session, loading, signUp, signIn, signOut }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  if (/Invalid login credentials/i.test(msg)) return "Невірний email або пароль";
+  if (/User already registered/i.test(msg)) return "Користувач з таким email вже існує";
+  if (/Password should be at least/i.test(msg)) return "Пароль має бути мінімум 6 символів";
+  if (/Email not confirmed/i.test(msg)) return "Підтвердіть email у листі (якщо увімкнено підтвердження)";
+  if (/OAuth was cancelled/i.test(msg)) return "Вхід скасовано";
+  if (/redirect/i.test(msg) && /not allowed|not permitted|invalid/i.test(msg)) {
+    return "Redirect URL не дозволений. Перевір Redirect URLs у Supabase.";
+  }
+  return msg;
 }
 
-/**
- * useAuth — хук для використання в компонентах
- * Приклад: const { user, signOut } = useAuth();
- */
+async function ensureOAuthDeps() {
+  try {
+    const WebBrowser = await import("expo-web-browser");
+    const AuthSession = await import("expo-auth-session");
+    return { WebBrowser, AuthSession };
+  } catch (e) {
+    const help =
+      "Для входу через Google/Apple встанови пакети:\n" +
+      "  npx expo install expo-auth-session expo-web-browser\n" +
+      "і налаштуй Redirect URLs у Supabase (Auth → URL Configuration).";
+    const err = new Error(help);
+    err.code = "OAUTH_DEPS_MISSING";
+    throw err;
+  }
+}
+
+async function signInWithOAuthProvider(provider) {
+  const { WebBrowser, AuthSession } = await ensureOAuthDeps();
+
+  // Required for iOS to close Safari view correctly after auth.
+  WebBrowser.maybeCompleteAuthSession?.();
+
+  const redirectTo = AuthSession.makeRedirectUri({
+    useProxy: isExpoGo,          // Expo Go: true, Dev build: false
+    scheme: "lexilevel",         // for dev build/standalone
+    path: "auth/callback",
+  });
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider,
+    options: { redirectTo },
+  });
+
+  if (error) throw error;
+  if (!data?.url) throw new Error("OAuth URL was not returned");
+
+  const result = await AuthSession.startAsync({
+    authUrl: data.url,
+    returnUrl: redirectTo,
+  });
+
+  if (result.type !== "success") {
+    throw new Error("OAuth was cancelled");
+  }
+
+  // Session will be picked up by onAuthStateChange after redirect.
+  return true;
+}
+
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let unsub = null;
+
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        setSession(data?.session ?? null);
+        setUser(data?.session?.user ?? null);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+
+    const { data } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      setUser(newSession?.user ?? null);
+    });
+
+    unsub = data?.subscription;
+
+    return () => {
+      try {
+        unsub?.unsubscribe?.();
+      } catch {}
+    };
+  }, []);
+
+  const api = useMemo(() => {
+    return {
+      user,
+      session,
+      loading,
+
+      async signUp(email, password) {
+        try {
+          const { data, error } = await supabase.auth.signUp({ email, password });
+          if (error) throw error;
+          return data;
+        } catch (e) {
+          throw new Error(friendlyAuthError(e));
+        }
+      },
+
+      async signIn(email, password) {
+        try {
+          const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+          if (error) throw error;
+          return data;
+        } catch (e) {
+          throw new Error(friendlyAuthError(e));
+        }
+      },
+
+      async signOut() {
+        const { error } = await supabase.auth.signOut();
+        if (error) throw error;
+      },
+
+      async signInWithGoogle() {
+        try {
+          return await signInWithOAuthProvider("google");
+        } catch (e) {
+          throw new Error(friendlyAuthError(e));
+        }
+      },
+
+      async signInWithApple() {
+        if (Platform.OS !== "ios") {
+          throw new Error("AppleID доступний лише на iOS");
+        }
+        try {
+          return await signInWithOAuthProvider("apple");
+        } catch (e) {
+          throw new Error(friendlyAuthError(e));
+        }
+      },
+    };
+  }, [user, session, loading]);
+
+  return <AuthContext.Provider value={api}>{children}</AuthContext.Provider>;
+}
+
 export function useAuth() {
-  return useContext(AuthContext);
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  return ctx;
 }
