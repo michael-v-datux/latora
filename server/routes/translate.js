@@ -16,7 +16,7 @@ const express = require('express');
 const router = express.Router();
 const { translateText } = require('../services/deepl');
 const { assessDifficulty } = require('../services/difficulty');
-const supabase = require('../lib/supabase');
+const supabase = require('../lib/supabase.server.cjs');
 
 router.post('/translate', async (req, res) => {
   try {
