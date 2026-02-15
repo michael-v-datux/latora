@@ -1,104 +1,134 @@
 /**
  * server/routes/lists.js — Маршрути управління списками
+ *
+ * ВАЖЛИВО:
+ * - Використовує Supabase Auth JWT (Bearer token) + RLS політики.
+ * - user_id береться з токена (req.user.id), не з x-user-id / query param.
  */
 
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const supabase = require('../lib/supabase');
 
-// GET /api/lists
-router.get('/lists', async (req, res) => {
+const requireAuth = require("../middleware/requireAuth");
+
+// GET /api/lists — отримати списки поточного користувача
+router.get("/lists", requireAuth, async (req, res, next) => {
   try {
-    const userId = req.headers['x-user-id'];
-    if (!userId) return res.status(401).json({ error: 'Не авторизовано' });
+    const supabase = req.supabase;
 
     const { data, error } = await supabase
-      .from('lists')
-      .select('*, list_words(count)')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+      .from("lists")
+      .select("*, list_words(count)")
+      .order("created_at", { ascending: false });
 
     if (error) throw error;
-    res.json(data.map(l => ({ ...l, word_count: l.list_words?.[0]?.count || 0 })));
+
+    return res.json(
+      (data || []).map((l) => ({
+        ...l,
+        word_count: l.list_words?.[0]?.count || 0,
+      }))
+    );
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return next(error);
   }
 });
 
-// POST /api/lists
-router.post('/lists', async (req, res) => {
+// POST /api/lists — створити список
+router.post("/lists", requireAuth, async (req, res, next) => {
   try {
-    const userId = req.headers['x-user-id'];
-    const { name, emoji = '📚', description = '' } = req.body;
-    if (!userId) return res.status(401).json({ error: 'Не авторизовано' });
-    if (!name) return res.status(400).json({ error: 'Назва обов\'язкова' });
+    const supabase = req.supabase;
+
+    const { name, emoji = "📚", description = "" } = req.body;
+
+    if (!name || typeof name !== "string" || name.trim().length === 0) {
+      return res.status(400).json({ error: "Назва обов'язкова" });
+    }
 
     const { data, error } = await supabase
-      .from('lists')
-      .insert({ user_id: userId, name, emoji, description })
+      .from("lists")
+      .insert({
+        user_id: req.user.id,
+        name: name.trim(),
+        emoji,
+        description,
+      })
       .select()
       .single();
 
     if (error) throw error;
-    res.status(201).json(data);
+
+    return res.status(201).json(data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return next(error);
   }
 });
 
-// POST /api/lists/:id/words
-router.post('/lists/:id/words', async (req, res) => {
+// POST /api/lists/:id/words — додати слово до списку
+router.post("/lists/:id/words", requireAuth, async (req, res, next) => {
   try {
+    const supabase = req.supabase;
     const { wordId } = req.body;
-    if (!wordId) return res.status(400).json({ error: 'wordId обов\'язковий' });
+
+    if (!wordId) {
+      return res.status(400).json({ error: "wordId обов'язковий" });
+    }
 
     const { data, error } = await supabase
-      .from('list_words')
+      .from("list_words")
       .insert({ list_id: req.params.id, word_id: wordId })
       .select()
       .single();
 
     if (error) throw error;
-    res.status(201).json(data);
+
+    return res.status(201).json(data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return next(error);
   }
 });
 
-// DELETE /api/lists/:id
-router.delete('/lists/:id', async (req, res) => {
+// DELETE /api/lists/:id — видалити список
+router.delete("/lists/:id", requireAuth, async (req, res, next) => {
   try {
-    const { error } = await supabase.from('lists').delete().eq('id', req.params.id);
+    const supabase = req.supabase;
+
+    const { error } = await supabase.from("lists").delete().eq("id", req.params.id);
     if (error) throw error;
-    res.json({ success: true });
+
+    return res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return next(error);
   }
 });
 
-// GET /api/suggest-list — AI-рекомендація списку
-router.get('/suggest-list', async (req, res) => {
+// GET /api/suggest-list?wordId=... — рекомендація списку (без userId у query)
+router.get("/suggest-list", requireAuth, async (req, res, next) => {
   try {
-    const { wordId, userId } = req.query;
-    if (!wordId || !userId) return res.status(400).json({ error: 'wordId та userId обов\'язкові' });
+    const supabase = req.supabase;
+    const { wordId } = req.query;
+
+    if (!wordId) {
+      return res.status(400).json({ error: "wordId обов'язковий" });
+    }
 
     // Отримуємо слово та списки користувача зі словами
     const [wordRes, listsRes] = await Promise.all([
-      supabase.from('words').select('*').eq('id', wordId).single(),
-      supabase.from('lists').select('*, list_words(word_id, words(*))').eq('user_id', userId),
+      supabase.from("words").select("*").eq("id", wordId).single(),
+      supabase.from("lists").select("*, list_words(word_id, words(*))"),
     ]);
 
     if (wordRes.error || listsRes.error) throw wordRes.error || listsRes.error;
 
     const word = wordRes.data;
-    const lists = listsRes.data;
+    const lists = listsRes.data || [];
 
-    // Проста евристика: рекомендуємо список з найбільш схожими словами за CEFR-рівнем
+    // Евристика: рекомендуємо список з найбільш схожими словами за CEFR/частиною мови
     let bestList = null;
     let bestScore = -1;
 
     for (const list of lists) {
-      const listWords = list.list_words?.map(lw => lw.words) || [];
+      const listWords = list.list_words?.map((lw) => lw.words) || [];
       let score = 0;
 
       for (const lw of listWords) {
@@ -112,13 +142,13 @@ router.get('/suggest-list', async (req, res) => {
       }
     }
 
-    res.json({
+    return res.json({
       suggested_list_id: bestList?.id || null,
       suggested_list_name: bestList?.name || null,
-      reason: bestScore > 0 ? 'Similar words by level and type' : 'Most recent list',
+      reason: bestScore > 0 ? "Similar words by level and type" : "Most recent list",
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return next(error);
   }
 });
 
