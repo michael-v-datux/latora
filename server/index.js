@@ -15,10 +15,13 @@ const cors = require('cors');
 
 // Завантажуємо змінні з .env файлу
 require('dotenv').config();
+require("./lib/env");
 
 const translateRoutes = require('./routes/translate');
 const listsRoutes = require('./routes/lists');
 const practiceRoutes = require('./routes/practice');
+
+const errorHandler = require("./middleware/error");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -36,6 +39,8 @@ app.use('/api', practiceRoutes);
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+app.use(errorHandler);
 
 // === Запуск сервера ===
 app.listen(PORT, () => {

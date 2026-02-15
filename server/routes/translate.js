@@ -16,13 +16,7 @@ const express = require('express');
 const router = express.Router();
 const { translateText } = require('../services/deepl');
 const { assessDifficulty } = require('../services/difficulty');
-const { createClient } = require('@supabase/supabase-js');
-
-// Supabase-клієнт для серверних операцій
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+const supabase = require('../lib/supabase');
 
 router.post('/translate', async (req, res) => {
   try {
