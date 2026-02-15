@@ -1,89 +1,96 @@
 /**
  * server/routes/practice.js — Маршрути для повторення слів
+ *
+ * Працює через Supabase Auth JWT (Bearer token) + RLS.
  */
 
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const supabase = require('../lib/supabase');
+
+const requireAuth = require("../middleware/requireAuth");
 
 // GET /api/practice/:listId — слова для повторення зі списку
-router.get('/practice/:listId', async (req, res) => {
+router.get("/practice/:listId", requireAuth, async (req, res, next) => {
   try {
-    const userId = req.headers['x-user-id'];
-    if (!userId) return res.status(401).json({ error: 'Не авторизовано' });
-
+    const supabase = req.supabase;
     const { listId } = req.params;
 
-    // Отримуємо слова зі списку разом з прогресом користувача
+    // Отримуємо слова зі списку разом з даними слова
+    // RLS на list_words гарантує, що користувач бачить тільки свої списки
     const { data, error } = await supabase
-      .from('list_words')
-      .select('word_id, words(*)')
-      .eq('list_id', listId);
+      .from("list_words")
+      .select("word_id, words(*)")
+      .eq("list_id", listId);
 
     if (error) throw error;
 
-    // Отримуємо прогрес для кожного слова
-    const wordIds = data.map(d => d.word_id);
-    const { data: progress } = await supabase
-      .from('user_word_progress')
-      .select('*')
-      .eq('user_id', userId)
-      .in('word_id', wordIds);
+    const wordIds = (data || []).map((d) => d.word_id);
+    if (wordIds.length === 0) {
+      return res.json({ total: 0, due: 0, words: [] });
+    }
 
-    // Об'єднуємо слова з прогресом
+    // Отримуємо прогрес для кожного слова (RLS на user_word_progress)
+    const { data: progress, error: progressError } = await supabase
+      .from("user_word_progress")
+      .select("*")
+      .in("word_id", wordIds);
+
+    if (progressError) throw progressError;
+
     const now = new Date();
-    const words = data.map(d => {
-      const p = progress?.find(pr => pr.word_id === d.word_id);
+
+    const words = (data || []).map((d) => {
+      const p = (progress || []).find((pr) => pr.word_id === d.word_id) || null;
       return {
         ...d.words,
-        progress: p || null,
+        progress: p,
         is_due: !p || new Date(p.next_review) <= now,
       };
     });
 
-    // Фільтруємо: спочатку ті, що потребують повторення
-    const dueWords = words.filter(w => w.is_due);
-    
-    res.json({
+    const dueWords = words.filter((w) => w.is_due);
+
+    return res.json({
       total: words.length,
       due: dueWords.length,
       words: dueWords,
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return next(error);
   }
 });
 
 // POST /api/practice/result — зберегти результат повторення
-router.post('/practice/result', async (req, res) => {
+router.post("/practice/result", requireAuth, async (req, res, next) => {
   try {
-    const userId = req.headers['x-user-id'];
-    if (!userId) return res.status(401).json({ error: 'Не авторизовано' });
-
+    const supabase = req.supabase;
     const { wordId, quality, newProgress } = req.body;
+
     if (!wordId || !quality || !newProgress) {
-      return res.status(400).json({ error: 'wordId, quality та newProgress обов\'язкові' });
+      return res.status(400).json({ error: "wordId, quality та newProgress обов'язкові" });
     }
 
-    // Upsert (вставити або оновити) прогрес
+    const payload = {
+      user_id: req.user.id,
+      word_id: wordId,
+      ease_factor: newProgress.ease_factor,
+      interval_days: newProgress.interval_days,
+      repetitions: newProgress.repetitions,
+      next_review: newProgress.next_review,
+      last_result: quality,
+    };
+
     const { data, error } = await supabase
-      .from('user_word_progress')
-      .upsert({
-        user_id: userId,
-        word_id: wordId,
-        ease_factor: newProgress.ease_factor,
-        interval_days: newProgress.interval_days,
-        repetitions: newProgress.repetitions,
-        next_review: newProgress.next_review,
-        last_result: quality,
-      })
+      .from("user_word_progress")
+      .upsert(payload, { onConflict: "user_id,word_id" })
       .select()
       .single();
 
     if (error) throw error;
-    res.json(data);
+
+    return res.json(data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return next(error);
   }
 });
 

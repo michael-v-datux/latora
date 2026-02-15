@@ -12,6 +12,7 @@
 
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 
 // Завантажуємо змінні з .env файлу
 require('dotenv').config();
@@ -29,6 +30,24 @@ const PORT = process.env.PORT || 3001;
 // === Middleware (обробка кожного запиту) ===
 app.use(cors());              // дозволяє запити з мобільного додатка
 app.use(express.json());      // парсить JSON у тілі запитів
+
+// === Latency logging ===
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    console.log(`⏱ ${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - start}ms`);
+  });
+  next();
+});
+
+// === Rate limit (protect paid APIs) ===
+const translateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/translate', translateLimiter);
 
 // === Маршрути (routes) ===
 app.use('/api', translateRoutes);
