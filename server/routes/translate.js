@@ -127,9 +127,8 @@ router.post('/translate', async (req, res) => {
       });
     }
 
-    // Крок 2.5: (опційно) Виявлення ідіом / сталих виразів через Claude
-    // ВАЖЛИВО: це НЕ повинно ламати базову логіку. Якщо Claude недоступний — просто повернеться is_idiom=false.
-    let idiom = { is_idiom: false, idiomatic_translations: [], note: '' };
+    // Крок 2.5: Виявлення ідіом (не ламає потік; при помилці просто пропускаємо)
+    let idiom = null;
     try {
       idiom = await detectIdioms({
         original: cleanWordRaw,
@@ -137,15 +136,13 @@ router.post('/translate', async (req, res) => {
         targetLang: tgtLang,
         literalTranslation: deeplTranslation,
       });
-      if (idiom?.is_idiom) {
-        console.log(`🧩 Idiom detected: "${cleanWordRaw}" -> ${idiom.idiomatic_translations?.[0] || ''}`);
-      }
     } catch (e) {
-      // Don't fail the whole request if idiom detection fails
-      console.warn('⚠️ Idiom detect error (non-fatal):', e?.message);
+      console.warn('⚠️ Idiom detect error:', e?.message || e);
+      idiom = null;
     }
 
-    // Primary translation: idiomatic (if detected) otherwise DeepL literal
+    // Якщо це ідіома — основний переклад робимо "idiomatic" (перший варіант),
+    // а DeepL лишаємо як literal у alt_translations
     const primaryTranslation = (idiom && idiom.is_idiom && Array.isArray(idiom.idiomatic_translations) && idiom.idiomatic_translations[0])
       ? idiom.idiomatic_translations[0]
       : deeplTranslation;
@@ -167,16 +164,14 @@ router.post('/translate', async (req, res) => {
       example_sentence: difficulty.example_sentence,
       part_of_speech: difficulty.part_of_speech,
 
-      // Idiom metadata (optional)
+      // Для ідіом: зберігаємо ідіоматичні варіанти + literal(DeepL) для UI (idiomatic vs literal)
       alt_translations: (idiom && idiom.is_idiom)
-        ? Array.from(new Set([
-            // keep the full idiomatic list
-            ...(idiom.idiomatic_translations || []),
-            // also keep DeepL literal if different, for transparency
-            ...(deeplTranslation && !isIdentityTranslation(primaryTranslation, deeplTranslation) ? [deeplTranslation] : []),
-          ])).slice(0, 5)
+        ? {
+            idiomatic: idiom.idiomatic_translations,
+            literal: idiom.literal_translation || deeplTranslation,
+          }
         : null,
-      translation_notes: (idiom && idiom.is_idiom) ? (idiom.note || null) : null,
+      translation_notes: (idiom && idiom.is_idiom) ? idiom.note : null,
       translation_kind: (idiom && idiom.is_idiom) ? 'idiom' : null,
     };
 
