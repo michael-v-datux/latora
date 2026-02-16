@@ -36,7 +36,7 @@
     "title": "Translate",
     "subtitle": "Choose languages · powered by AI",
     "placeholder": "Enter a word or phrase...",
-    "hint": "Try: serendipity · break a leg · reluctant",
+    "hint": "Tip: you can enter phrases and idioms (e.g., “break a leg”).",
     "cta": "Translate",
     "button": "Translate",
     "lang_picker_title": "Languages",
@@ -48,7 +48,12 @@
     "lang_search": "Search language",
     "idiom_label": "IDIOMATIC MEANING",
     "variants_label": "ALTERNATIVES",
-    "add_to_list_failed": "Failed to add the word to the list"
+    "add_to_list_failed": "Failed to add the word to the list",
+    "input_label": "Word or phrase",
+    "powered_by_ai": "powered by AI",
+    "source_language": "Source language",
+    "target_language": "Target language",
+    "lang_all": "All languages"
   },
   "word": {
     "difficulty": "DIFFICULTY",

@@ -10,18 +10,16 @@ import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import WordCard from '../components/WordCard';
 import AddToListModal from '../components/AddToListModal';
-import LanguagePairPickerModal from '../components/LanguagePairPickerModal';
-import LanguageMixConfirmModal from '../components/LanguageMixConfirmModal';
-import { translateWord, suggestList } from '../services/translateService';
+import LanguagePickerModal from '../components/LanguagePickerModal';
+import { translateWord, suggestList, fetchLanguages } from '../services/translateService';
 import { fetchLists, createList, addWordToList } from '../services/listsService';
-import { fetchDeepLLanguages } from '../services/languagesService';
 import { COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
 import { useI18n } from '../i18n';
-import { DEFAULT_PAIR, EUROPE_LANGUAGE_ALLOWLIST, normalizeLangCode, pairLabel } from '../utils/languages';
 
 export default function TranslateScreen() {
   const { t } = useI18n();
@@ -30,23 +28,24 @@ export default function TranslateScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+const [sourceLang, setSourceLang] = useState('EN');
+const [targetLang, setTargetLang] = useState('UK');
+const [langModalVisible, setLangModalVisible] = useState(false);
+const [langModalMode, setLangModalMode] = useState('source'); // 'source' | 'target'
+const [deeplSource, setDeeplSource] = useState([]);
+const [deeplTarget, setDeeplTarget] = useState([]);
+
+const [pinnedLangs, setPinnedLangs] = useState([]);
+const [recentSource, setRecentSource] = useState([]);
+const [recentTarget, setRecentTarget] = useState([]);
+
+
   const [showModal, setShowModal] = useState(false);
   const [lists, setLists] = useState([]);
   const [suggestedListName, setSuggestedListName] = useState(null);
   const [suggestedListId, setSuggestedListId] = useState(null);
 
   const [isAdded, setIsAdded] = useState(false);
-
-  // Language pair selection
-  const [pair, setPair] = useState(DEFAULT_PAIR);
-  const [pickerVisible, setPickerVisible] = useState(false);
-  const [recentPairs, setRecentPairs] = useState([]);
-  const [pinnedPairs, setPinnedPairs] = useState([]);
-  const [deeplLangs, setDeeplLangs] = useState({ source: [], target: [] });
-
-  // Mix confirm flow
-  const [mixConfirmVisible, setMixConfirmVisible] = useState(false);
-  const [mixPayload, setMixPayload] = useState(null); // { listId, listPair, newPair }
 
   // toast
   const [toast, setToast] = useState(null);
@@ -58,114 +57,89 @@ export default function TranslateScreen() {
     toastTimer.current = setTimeout(() => setToast(null), 2500);
   };
 
-  const canTranslate = useMemo(() => !!query.trim(), [query]);
-
-  const STORAGE_PAIR = 'LL_PAIR';
-  const STORAGE_RECENTS = 'LL_RECENT_PAIRS';
-  const STORAGE_PINS = 'LL_PINNED_PAIRS';
-
-  const presets = useMemo(() => ([
-    { sourceLang: 'EN', targetLang: 'UK' },
-    { sourceLang: 'UK', targetLang: 'EN' },
-    { sourceLang: 'EN', targetLang: 'PL' },
-    { sourceLang: 'PL', targetLang: 'EN' },
-    { sourceLang: 'EN', targetLang: 'DE' },
-    { sourceLang: 'EN', targetLang: 'FR' },
-    { sourceLang: 'EN', targetLang: 'IT' },
-    { sourceLang: 'EN', targetLang: 'ES' },
-  ]), []);
-
-  // bootstrap saved pair + prefs
-  useEffect(() => {
-    (async () => {
-      try {
-        const rawPair = await AsyncStorage.getItem(STORAGE_PAIR);
-        if (rawPair) {
-          const parsed = JSON.parse(rawPair);
-          if (parsed?.sourceLang && parsed?.targetLang) {
-            setPair({
-              sourceLang: normalizeLangCode(parsed.sourceLang),
-              targetLang: normalizeLangCode(parsed.targetLang),
-            });
-          }
-        }
-      } catch {
-        // ignore
-      }
-
-      try {
-        const rawRecent = await AsyncStorage.getItem(STORAGE_RECENTS);
-        if (rawRecent) setRecentPairs(JSON.parse(rawRecent) || []);
-      } catch {
-        // ignore
-      }
-
-      try {
-        const rawPins = await AsyncStorage.getItem(STORAGE_PINS);
-        if (rawPins) setPinnedPairs(JSON.parse(rawPins) || []);
-      } catch {
-        // ignore
-      }
-    })();
-  }, []);
-
-  // Load DeepL supported languages (from backend)
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await fetchDeepLLanguages();
-        const source = (data?.source || []).map((l) => normalizeLangCode(l.language));
-        const target = (data?.target || []).map((l) => normalizeLangCode(l.language));
-
-        // Keep a Europe-first allowlist to avoid surfacing Asian languages
-        setDeeplLangs({
-          source: source.filter((c) => EUROPE_LANGUAGE_ALLOWLIST.has(c) || c.startsWith('EN')), // keep EN variants
-          target: target.filter((c) => EUROPE_LANGUAGE_ALLOWLIST.has(c) || c.startsWith('EN')),
-        });
-      } catch (e) {
-        // fallback: still usable with presets
-        console.warn('Failed to load DeepL languages:', e?.message);
-        setDeeplLangs({
-          source: Array.from(EUROPE_LANGUAGE_ALLOWLIST),
-          target: Array.from(EUROPE_LANGUAGE_ALLOWLIST),
-        });
-      }
-    })();
-  }, []);
-
-  const persistPair = async (next) => {
-    setPair(next);
+  
+useEffect(() => {
+  (async () => {
     try {
-      await AsyncStorage.setItem(STORAGE_PAIR, JSON.stringify(next));
-    } catch {
+      const savedSource = await AsyncStorage.getItem('TRANSLATE_SOURCE_LANG');
+      const savedTarget = await AsyncStorage.getItem('TRANSLATE_TARGET_LANG');
+      const savedPinned = await AsyncStorage.getItem('PINNED_LANGS');
+      const savedRecentSource = await AsyncStorage.getItem('RECENT_SOURCE_LANGS');
+      const savedRecentTarget = await AsyncStorage.getItem('RECENT_TARGET_LANGS');
+
+      if (savedSource) setSourceLang(savedSource);
+      if (savedTarget) setTargetLang(savedTarget);
+      if (savedPinned) setPinnedLangs(JSON.parse(savedPinned) || []);
+      if (savedRecentSource) setRecentSource(JSON.parse(savedRecentSource) || []);
+      if (savedRecentTarget) setRecentTarget(JSON.parse(savedRecentTarget) || []);
+    } catch (e) {
       // ignore
     }
 
-    // update recents
-    const key = `${normalizeLangCode(next.sourceLang)}->${normalizeLangCode(next.targetLang)}`;
-    setRecentPairs((prev) => {
-      const clean = Array.isArray(prev) ? prev : [];
-      const without = clean.filter((p) => `${normalizeLangCode(p.sourceLang)}->${normalizeLangCode(p.targetLang)}` !== key);
-      const updated = [{ ...next }, ...without].slice(0, 8);
-      AsyncStorage.setItem(STORAGE_RECENTS, JSON.stringify(updated)).catch(() => {});
-      return updated;
-    });
-  };
+    try {
+      const { source, target } = await fetchLanguages();
+      // small UX: keep mostly European languages (DeepL list is already curated, but includes non-EU)
+      setDeeplSource(source || []);
+      setDeeplTarget(target || []);
+    } catch (e) {
+      // ignore; translate still works with defaults
+    }
+  })();
+}, []);
 
-  const togglePin = async (p) => {
-    const key = `${normalizeLangCode(p.sourceLang)}->${normalizeLangCode(p.targetLang)}`;
-    setPinnedPairs((prev) => {
-      const clean = Array.isArray(prev) ? prev : [];
-      const exists = clean.some((x) => `${normalizeLangCode(x.sourceLang)}->${normalizeLangCode(x.targetLang)}` === key);
-      const updated = exists ? clean.filter((x) => `${normalizeLangCode(x.sourceLang)}->${normalizeLangCode(x.targetLang)}` !== key) : [{ ...p }, ...clean].slice(0, 10);
-      AsyncStorage.setItem(STORAGE_PINS, JSON.stringify(updated)).catch(() => {});
-      return updated;
-    });
-  };
+useEffect(() => {
+  AsyncStorage.setItem('TRANSLATE_SOURCE_LANG', sourceLang).catch(() => {});
+}, [sourceLang]);
 
-  const swapPair = () => {
-    persistPair({ sourceLang: pair.targetLang, targetLang: pair.sourceLang });
-  };
+useEffect(() => {
+  AsyncStorage.setItem('TRANSLATE_TARGET_LANG', targetLang).catch(() => {});
+}, [targetLang]);
+
+const togglePin = async (code) => {
+  const c = String(code || '').toUpperCase();
+  const next = pinnedLangs.includes(c)
+    ? pinnedLangs.filter((x) => x !== c)
+    : [c, ...pinnedLangs].slice(0, 12);
+
+  setPinnedLangs(next);
+  await AsyncStorage.setItem('PINNED_LANGS', JSON.stringify(next)).catch(() => {});
+};
+
+const pushRecent = async (mode, code) => {
+  const c = String(code || '').toUpperCase();
+  if (mode === 'source') {
+    const next = [c, ...recentSource.filter((x) => x !== c)].slice(0, 10);
+    setRecentSource(next);
+    await AsyncStorage.setItem('RECENT_SOURCE_LANGS', JSON.stringify(next)).catch(() => {});
+  } else {
+    const next = [c, ...recentTarget.filter((x) => x !== c)].slice(0, 10);
+    setRecentTarget(next);
+    await AsyncStorage.setItem('RECENT_TARGET_LANGS', JSON.stringify(next)).catch(() => {});
+  }
+};
+
+const openLangModal = (mode) => {
+  setLangModalMode(mode);
+  setLangModalVisible(true);
+};
+
+const normalizeToSource = (code) => String(code || '').toUpperCase().split('-')[0];
+
+const handleSwap = () => {
+  const newSource = normalizeToSource(targetLang);
+  const newTarget = sourceLang;
+
+  // sanity: if newSource is empty, do nothing
+  if (!newSource || !newTarget) return;
+
+  setSourceLang(newSource);
+  setTargetLang(newTarget);
+
+  pushRecent('source', newSource);
+  pushRecent('target', newTarget);
+};
+
+  const canTranslate = useMemo(() => !!query.trim(), [query]);
 
   const handleTranslate = async () => {
     if (!query.trim()) return;
@@ -176,7 +150,7 @@ export default function TranslateScreen() {
     setIsAdded(false);
 
     try {
-      const data = await translateWord(query, { sourceLang: pair.sourceLang, targetLang: pair.targetLang });
+      const data = await translateWord(query, sourceLang, targetLang);
 
       if (data?.error) {
         setError(data.error); // "Цього слова немає у словнику"
@@ -227,47 +201,17 @@ export default function TranslateScreen() {
       setShowModal(false);
       setIsAdded(true);
       const listName = (lists || []).find((l) => l.id === listId)?.name;
-      showToast(listName ? t('lists.added_to_named', { name: listName }) : t('lists.added_to_list'));
+      showToast(listName ? `✓ Додано у «${listName}»` : '✓ Додано у список');
     } catch (e) {
       console.warn('Add to list failed:', e?.message);
-
-      // Language mix guard
-      if (e?.status === 409 && e?.data?.code === 'LANG_MIX_CONFIRM') {
-        setMixPayload({
-          listId,
-          listPair: e.data.list_pair,
-          newPair: e.data.new_pair,
-        });
-        setMixConfirmVisible(true);
-        return;
-      }
-
-      Alert.alert(t('common.error'), t('translate.add_to_list_failed'));
-    }
-  };
-
-  const confirmMix = async ({ rememberChoice }) => {
-    try {
-      if (!mixPayload?.listId || !result?.id) return;
-      await addWordToList(mixPayload.listId, result.id, { forceMix: true, rememberChoice: !!rememberChoice });
-      setMixConfirmVisible(false);
-      setMixPayload(null);
-      setShowModal(false);
-      setIsAdded(true);
-      const listName = (lists || []).find((l) => l.id === mixPayload.listId)?.name;
-      showToast(listName ? t('lists.added_to_named', { name: listName }) : t('lists.added_to_list'));
-    } catch (e) {
-      console.warn('Mix confirm add failed:', e?.message);
-      setMixConfirmVisible(false);
-      setMixPayload(null);
-      Alert.alert(t('common.error'), t('translate.add_to_list_failed'));
+      Alert.alert('Помилка', 'Не вдалося додати слово у список');
     }
   };
 
   const handleCreateNewList = () => {
     // iOS: Alert.prompt доступний; Android — fallback
     const create = async (name) => {
-      const listName = (name || '').trim() || t('lists.default_list_name');
+      const listName = (name || '').trim() || 'My Words';
 
       try {
         const newList = await createList({ name: listName });
@@ -277,18 +221,18 @@ export default function TranslateScreen() {
         await handleAddToList(newList.id);
       } catch (e) {
         console.warn('Create list failed:', e?.message);
-        Alert.alert(t('common.error'), t('lists.create_failed'));
+        Alert.alert('Помилка', 'Не вдалося створити список');
       }
     };
 
     if (Platform.OS === 'ios' && Alert.prompt) {
-      Alert.prompt(t('lists.new_list_title'), t('lists.new_list_prompt'), [
-        { text: t('common.cancel'), style: 'cancel' },
-        { text: t('common.create'), onPress: (value) => create(value) },
+      Alert.prompt('New list', 'Назва списку', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Create', onPress: (value) => create(value) },
       ]);
     } else {
       // простий fallback
-      create(t('lists.default_list_name'));
+      create('My Words');
     }
   };
 
@@ -304,57 +248,83 @@ export default function TranslateScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.header}>
-            <Text style={styles.title}>{t('translate.title')}</Text>
-            <Text style={styles.subtitle}>{t('translate.subtitle')}</Text>
-          </View>
+  <Text style={styles.title}>{t('translate.title')}</Text>
 
-          {/* Language bar */}
-          <View style={styles.langBar}>
-            <TouchableOpacity
-              style={styles.langPill}
-              onPress={() => setPickerVisible(true)}
-              activeOpacity={0.75}
-            >
-              <Text style={styles.langPillText}>{pairLabel(pair.sourceLang, pair.targetLang)}</Text>
-              <Text style={styles.langPillChevron}>▾</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.swapBtn} onPress={swapPair} activeOpacity={0.75}>
-              <Text style={styles.swapIcon}>⇄</Text>
-            </TouchableOpacity>
-          </View>
+  <View style={styles.langRow}>
+    <TouchableOpacity
+      activeOpacity={0.85}
+      onPress={() => openLangModal('source')}
+      style={styles.langBubble}
+    >
+      <Text style={styles.langBubbleText}>{sourceLang}</Text>
+      <Ionicons name="chevron-down" size={14} color={COLORS.textHint} />
+    </TouchableOpacity>
 
-          <View style={styles.inputCard}>
-            <TextInput
-              style={styles.input}
-              value={query}
-              onChangeText={setQuery}
-              placeholder={t("translate.placeholder")}
-              placeholderTextColor={COLORS.textHint}
-              returnKeyType="search"
-              onSubmitEditing={handleTranslate}
-              autoCorrect={false}
-              autoCapitalize="none"
-            />
-            <View style={styles.inputFooter}>
-              <Text style={styles.hint}>{t('translate.hint')}</Text>
-              <TouchableOpacity
-                style={[styles.translateButton, !canTranslate && styles.translateButtonDisabled]}
-                onPress={handleTranslate}
-                disabled={!canTranslate || loading}
-                activeOpacity={0.7}
-              >
-                {loading ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
-                  <Text style={[styles.translateButtonText, !canTranslate && styles.translateButtonTextDisabled]}>
-                    {t('translate.button')}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
+    <TouchableOpacity
+      activeOpacity={0.9}
+      onPress={handleSwap}
+      style={styles.swapBtn}
+    >
+      <Ionicons name="swap-horizontal" size={18} color={COLORS.primary} />
+    </TouchableOpacity>
 
-          {error && (
+    <TouchableOpacity
+      activeOpacity={0.85}
+      onPress={() => openLangModal('target')}
+      style={styles.langBubble}
+    >
+      <Text style={styles.langBubbleText}>{targetLang}</Text>
+      <Ionicons name="chevron-down" size={14} color={COLORS.textHint} />
+    </TouchableOpacity>
+  </View>
+
+  <Text style={styles.subtitle} numberOfLines={1}>
+    {sourceLang} → {targetLang} · {t('translate.powered_by_ai')}
+  </Text>
+</View>
+
+<View style={styles.inputCard}>
+  <Text style={styles.inputLabel}>{t('translate.input_label')}</Text>
+            <View style={styles.inputWrap}>
+    <TextInput
+      style={styles.input}
+      value={query}
+      onChangeText={setQuery}
+      placeholder={t('translate.placeholder')}
+      placeholderTextColor={COLORS.textHint}
+      returnKeyType="search"
+      onSubmitEditing={handleTranslate}
+      autoCorrect={false}
+      autoCapitalize="none"
+    />
+    {query.length > 0 && (
+      <TouchableOpacity
+        onPress={() => setQuery('')}
+        hitSlop={12}
+        style={styles.clearBtn}
+      >
+        <Ionicons name="close-circle" size={18} color={COLORS.textHint} />
+      </TouchableOpacity>
+    )}
+  </View>
+
+  <TouchableOpacity
+    style={[styles.primaryBtn, !canTranslate && styles.primaryBtnDisabled]}
+    onPress={handleTranslate}
+    disabled={!canTranslate || loading}
+    activeOpacity={0.8}
+  >
+    {loading ? (
+      <ActivityIndicator size="small" color="#ffffff" />
+    ) : (
+      <Text style={styles.primaryBtnText}>{t('translate.button')}</Text>
+    )}
+  </TouchableOpacity>
+
+  <Text style={styles.hint}>{t('translate.hint')}</Text>
+</View>
+
+{error && (
             <View style={styles.errorBox}>
               <Text style={styles.errorText}>{error}</Text>
             </View>
@@ -371,7 +341,32 @@ export default function TranslateScreen() {
           )}
 
           <View style={{ height: 40 }} />
-        </ScrollView>
+        
+<LanguagePickerModal
+  visible={langModalVisible}
+  onClose={() => setLangModalVisible(false)}
+  mode={langModalMode}
+  languagesSource={deeplSource}
+  languagesTarget={deeplTarget}
+  selectedSource={sourceLang}
+  selectedTarget={targetLang}
+  pinned={pinnedLangs}
+  recent={langModalMode === 'source' ? recentSource : recentTarget}
+  onTogglePin={togglePin}
+  onSelect={(code) => {
+    setLangModalVisible(false);
+    if (langModalMode === 'source') {
+      const v = String(code).toUpperCase().split('-')[0];
+      setSourceLang(v);
+      pushRecent('source', v);
+    } else {
+      const v = String(code).toUpperCase();
+      setTargetLang(v);
+      pushRecent('target', v);
+    }
+  }}
+/>
+</ScrollView>
 
         {/* toast */}
         {toast && (
@@ -392,33 +387,6 @@ export default function TranslateScreen() {
             handleCreateNewList();
           }}
         />
-
-        <LanguagePairPickerModal
-          visible={pickerVisible}
-          onClose={() => setPickerVisible(false)}
-          sourceLanguages={deeplLangs.source}
-          targetLanguages={deeplLangs.target}
-          currentPair={pair}
-          presets={presets}
-          recentPairs={recentPairs}
-          pinnedPairs={pinnedPairs}
-          onSelectPair={(p) => {
-            setPickerVisible(false);
-            persistPair({ sourceLang: normalizeLangCode(p.sourceLang), targetLang: normalizeLangCode(p.targetLang) });
-          }}
-          onTogglePin={togglePin}
-        />
-
-        <LanguageMixConfirmModal
-          visible={mixConfirmVisible}
-          listPair={mixPayload?.listPair}
-          newPair={mixPayload?.newPair}
-          onCancel={() => {
-            setMixConfirmVisible(false);
-            setMixPayload(null);
-          }}
-          onConfirm={confirmMix}
-        />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -427,60 +395,21 @@ export default function TranslateScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
+    marginTop: SPACING.md,
     backgroundColor: COLORS.background,
   },
   container: {
     flex: 1,
+    marginTop: SPACING.md,
   },
   scrollView: {
     flex: 1,
+    marginTop: SPACING.md,
     paddingHorizontal: SPACING.xl,
   },
   header: {
     paddingTop: SPACING.lg,
     paddingBottom: SPACING.xl,
-  },
-  langBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    gap: 10,
-  },
-  langPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    flex: 1,
-    justifyContent: 'space-between',
-  },
-  langPillText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    letterSpacing: 0.2,
-  },
-  langPillChevron: {
-    fontSize: 12,
-    color: COLORS.textMuted,
-  },
-  swapBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  swapIcon: {
-    fontSize: 16,
-    color: COLORS.textPrimary,
   },
   title: {
     fontSize: 28,
@@ -489,10 +418,11 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   subtitle: {
-    fontSize: 13,
-    color: COLORS.textMuted,
-    marginTop: 4,
-    letterSpacing: 0.2,
+    marginTop: 8,
+    fontSize: 11,
+    color: COLORS.textHint,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
   },
   inputCard: {
     backgroundColor: COLORS.surface,
@@ -508,11 +438,14 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   input: {
+    flex: 1,
+    marginTop: SPACING.sm,
+    height: 48,
     fontSize: 18,
     color: COLORS.primary,
     fontWeight: '400',
     letterSpacing: -0.3,
-    paddingVertical: 0,
+    paddingVertical: 10,
   },
   inputFooter: {
     flexDirection: 'row',
@@ -525,6 +458,7 @@ const styles = StyleSheet.create({
     color: COLORS.textHint,
     letterSpacing: 0.3,
     flex: 1,
+    marginTop: SPACING.md,
   },
   translateButton: {
     backgroundColor: COLORS.primary,
@@ -575,4 +509,78 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 13,
   },
+
+langRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 10,
+  marginTop: SPACING.md,
+},
+langBubble: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 6,
+  paddingHorizontal: 14,
+  paddingVertical: 10,
+  borderRadius: 999,
+  backgroundColor: COLORS.surface,
+  borderWidth: 1,
+  borderColor: COLORS.border,
+},
+langBubbleText: {
+  fontSize: 13,
+  fontWeight: '700',
+  color: COLORS.primary,
+  letterSpacing: 0.2,
+},
+swapBtn: {
+  width: 40,
+  height: 40,
+  borderRadius: 999,
+  alignItems: 'center',
+  justifyContent: 'center',
+  backgroundColor: COLORS.surface,
+  borderWidth: 1,
+  borderColor: COLORS.border,
+},
+inputWrap: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  borderRadius: BORDER_RADIUS.md,
+  backgroundColor: COLORS.surface,
+  paddingHorizontal: SPACING.md,
+  minHeight: 48,
+},
+clearBtn: {
+  marginLeft: 8,
+},
+primaryBtn: {
+  marginTop: SPACING.md,
+  backgroundColor: COLORS.primary,
+  paddingVertical: 14,
+  borderRadius: BORDER_RADIUS.md,
+  alignItems: 'center',
+  justifyContent: 'center',
+},
+primaryBtnDisabled: {
+  opacity: 0.5,
+},
+primaryBtnText: {
+  color: '#ffffff',
+  fontWeight: '700',
+  fontSize: 14,
+},
+
+
+inputLabel: {
+  color: COLORS.textHint,
+  fontSize: 12,
+  fontWeight: '700',
+  marginBottom: 8,
+  letterSpacing: 0.3,
+},
+
 });

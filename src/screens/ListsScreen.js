@@ -28,8 +28,6 @@ import { Swipeable } from 'react-native-gesture-handler';
 import CefrBadge from '../components/CefrBadge';
 import DifficultyBar from '../components/DifficultyBar';
 import { COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
-import { useI18n } from '../i18n';
-import { pairLabel } from '../utils/languages';
 import {
   fetchLists,
   fetchListDetails,
@@ -40,8 +38,39 @@ import {
   moveWords,
 } from '../services/listsService';
 
+// --- Helpers: normalize idiom fields coming from Supabase/HTTP ---
+const normalizeAltTranslations = (v) => {
+  if (!v) return [];
+  let arr = v;
+
+  if (typeof arr === 'string') {
+    try {
+      arr = JSON.parse(arr);
+    } catch {
+      return [];
+    }
+  }
+
+  if (!Array.isArray(arr)) return [];
+
+  return arr
+    .map((x) => {
+      if (!x) return '';
+      if (typeof x === 'string') return x.trim();
+      if (typeof x === 'object') return (x.text || x.translation || '').toString().trim();
+      return '';
+    })
+    .filter(Boolean);
+};
+
+const isIdiomatic = (item) => {
+  const kind = (item?.translation_kind || '').toString().toLowerCase();
+  const pos = (item?.part_of_speech || item?.pos || '').toString().toLowerCase();
+  return kind.includes('idiom') || kind.includes('idiomatic') || pos === 'idiom';
+};
+
+
 export default function ListsScreen() {
-  const { t } = useI18n();
   const [lists, setLists] = useState([]);
   const [selectedList, setSelectedList] = useState(null);
   const [selectedWords, setSelectedWords] = useState([]);
@@ -66,8 +95,9 @@ export default function ListsScreen() {
     return { totalWords, totalLists };
   }, [lists]);
 
-    const formatWords = (n) => t('lists.words', { count: n });
-  const formatLists = (n) => t('lists.lists', { count: n });
+  const pluralize = (n, one, many) => (n === 1 ? one : many);
+  const formatWords = (n) => `${n} ${pluralize(n, 'word', 'words')}`;
+  const formatLists = (n) => `${n} ${pluralize(n, 'list', 'lists')}`;
 
   const loadLists = async (opts = { silent: false }) => {
     if (!opts.silent) setLoadingLists(true);
@@ -76,7 +106,7 @@ export default function ListsScreen() {
       setLists(Array.isArray(data) ? data : []);
     } catch (e) {
       console.warn('Failed to fetch lists:', e?.message);
-      Alert.alert(t('common.error'), t('lists.load_lists_failed'));
+      Alert.alert('Помилка', 'Не вдалося завантажити списки');
     } finally {
       if (!opts.silent) setLoadingLists(false);
     }
@@ -94,16 +124,21 @@ export default function ListsScreen() {
         id: w.id,
         original: w.original,
         translation: w.translation,
-        alt_translations: w.alt_translations || null,
-        source_lang: w.source_lang || null,
-        target_lang: w.target_lang || null,
         cefr: w.cefr_level,
         score: w.difficulty_score ?? 50,
+
+        // language pair + idioms (if present)
+        source_lang: w.source_lang,
+        target_lang: w.target_lang,
+        alt_translations: w.alt_translations,
+        translation_notes: w.translation_notes,
+        translation_kind: w.translation_kind,
+        part_of_speech: w.part_of_speech,
       }));
       setSelectedWords(words);
     } catch (e) {
       console.warn('Failed to fetch list details:', e?.message);
-      Alert.alert(t('common.error'), t('lists.load_list_failed'));
+      Alert.alert('Помилка', 'Не вдалося завантажити слова списку');
     } finally {
       setLoadingDetails(false);
     }
@@ -118,11 +153,16 @@ export default function ListsScreen() {
         id: w.id,
         original: w.original,
         translation: w.translation,
-        alt_translations: w.alt_translations || null,
-        source_lang: w.source_lang || null,
-        target_lang: w.target_lang || null,
         cefr: w.cefr_level,
         score: w.difficulty_score ?? 50,
+
+        // language pair + idioms (if present)
+        source_lang: w.source_lang,
+        target_lang: w.target_lang,
+        alt_translations: w.alt_translations,
+        translation_notes: w.translation_notes,
+        translation_kind: w.translation_kind,
+        part_of_speech: w.part_of_speech,
       }));
       setSelectedWords(words);
     } catch (e) {
@@ -163,7 +203,7 @@ export default function ListsScreen() {
   const handleCreateNewList = async () => {
     const name = (newListName || '').trim();
     if (!name) {
-      Alert.alert(t('common.error'), t('lists.name_required'));
+      Alert.alert('Помилка', 'Вкажи назву списку');
       return;
     }
 
@@ -184,7 +224,7 @@ export default function ListsScreen() {
       await loadLists({ silent: true });
     } catch (e) {
       console.warn('Create list failed:', e?.message);
-      Alert.alert(t('common.error'), t('lists.create_failed'));
+      Alert.alert('Помилка', 'Не вдалося створити список');
     } finally {
       setCreatingList(false);
     }
@@ -204,7 +244,7 @@ export default function ListsScreen() {
               setLists((prev) => (prev || []).filter((l) => l.id !== list.id));
               await deleteList(list.id);
             } catch (e) {
-              Alert.alert(t('common.error'), t('lists.delete_failed'));
+              Alert.alert('Помилка', 'Не вдалося видалити список');
               await loadLists({ silent: true });
             }
           },
@@ -242,7 +282,7 @@ export default function ListsScreen() {
               await bulkDeleteWords(selectedList.id, ids);
               await loadLists({ silent: true });
             } catch (e) {
-              Alert.alert(t('common.error'), t('lists.bulk_delete_failed'));
+              Alert.alert('Помилка', 'Не вдалося видалити слова');
               await refreshSelectedList();
             }
           },
@@ -278,7 +318,7 @@ export default function ListsScreen() {
               });
               await loadLists({ silent: true });
             } catch (e) {
-              Alert.alert(t('common.error'), t('lists.move_failed'));
+              Alert.alert('Помилка', 'Не вдалося перенести слова');
               await refreshSelectedList();
             }
           },
@@ -347,9 +387,9 @@ export default function ListsScreen() {
               ListEmptyComponent={() => (
                 <View style={styles.emptyState}>
                   <Ionicons name="add-circle-outline" size={28} color={COLORS.textMuted} />
-                  <Text style={styles.emptyTitle}>{t('lists.empty_words')}</Text>
+                  <Text style={styles.emptyTitle}>No words yet</Text>
                   <Text style={styles.emptySubtitle}>
-                    {t('lists.empty_words_subtitle')}
+                    Add words from Translate to start building your vocabulary.
                   </Text>
                 </View>
               )}
@@ -378,16 +418,17 @@ export default function ListsScreen() {
                         <CefrBadge level={item.cefr} small />
                       </View>
                       <Text style={styles.wordTranslation}>{item.translation}</Text>
-
-                      {(item.source_lang && item.target_lang) && (
-                        <Text style={styles.wordPair}>{pairLabel(item.source_lang, item.target_lang)}</Text>
+                      {(item.source_lang || item.target_lang) && (
+                        <Text style={styles.wordLang}>{(item.source_lang || 'EN')} → {(item.target_lang || 'UK')}</Text>
                       )}
-
-                      {Array.isArray(item.alt_translations) && item.alt_translations.length > 0 && (
-                        <View style={styles.wordAltWrap}>
-                          {item.alt_translations.slice(0, 3).map((a, idx) => (
-                            <Text key={`${a.text}-${idx}`} style={styles.wordAlt}>• {a.text}</Text>
+                      {(isIdiomatic(item) && normalizeAltTranslations(item.alt_translations).length > 0) && (
+                        <View style={styles.wordAltTranslations}>
+                          {normalizeAltTranslations(item.alt_translations).map((t, i) => (
+                            <Text key={`${item.id}-alt-${i}`} style={styles.wordAltText}>• {t}</Text>
                           ))}
+                          {!!item.translation_notes && (
+                            <Text style={styles.wordAltNote}>{item.translation_notes}</Text>
+                          )}
                         </View>
                       )}
                     </View>
@@ -405,7 +446,7 @@ export default function ListsScreen() {
                       <TouchableOpacity
                         style={styles.swipeDelete}
                         onPress={() => {
-                          Alert.alert(t('lists.delete_word_title'), t('lists.delete_word_prompt', { word: item.original }), [
+                          Alert.alert('Видалити слово?', `Видалити «${item.original}» зі списку?`, [
                             { text: 'Скасувати', style: 'cancel' },
                             {
                               text: 'Видалити',
@@ -416,7 +457,7 @@ export default function ListsScreen() {
                                   await removeWordFromList(selectedList.id, item.id);
                                   await loadLists({ silent: true });
                                 } catch (e) {
-                                  Alert.alert(t('common.error'), t('lists.delete_word_failed'));
+                                  Alert.alert('Помилка', 'Не вдалося видалити слово');
                                   await refreshSelectedList();
                                 }
                               },
@@ -426,7 +467,7 @@ export default function ListsScreen() {
                         activeOpacity={0.8}
                       >
                         <Ionicons name="trash-outline" size={18} color={COLORS.surface} />
-                        <Text style={styles.swipeDeleteText}>{t('common.delete')}</Text>
+                        <Text style={styles.swipeDeleteText}>Delete</Text>
                       </TouchableOpacity>
                     )}
                     rightThreshold={40}
@@ -466,7 +507,7 @@ export default function ListsScreen() {
                 }}
                 disabled={selectedCount === 0}
               >
-                <Text style={styles.bulkBarText}>{t('common.move')}</Text>
+                <Text style={styles.bulkBarText}>Move</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -474,7 +515,7 @@ export default function ListsScreen() {
                 onPress={handleBulkDelete}
                 disabled={selectedCount === 0}
               >
-                <Text style={styles.bulkBarTextDanger}>{t('common.delete')}</Text>
+                <Text style={styles.bulkBarTextDanger}>Delete</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -489,13 +530,13 @@ export default function ListsScreen() {
             <Pressable style={styles.overlay} onPress={() => setMoveModalVisible(false)}>
               <Pressable style={styles.modal} onPress={() => {}}>
                 <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>{t('lists.move_to_list')}</Text>
+                  <Text style={styles.modalTitle}>Move to list</Text>
                   <TouchableOpacity onPress={() => setMoveModalVisible(false)}>
                     <Text style={styles.modalClose}>✕</Text>
                   </TouchableOpacity>
                 </View>
 
-                <Text style={styles.modalSubtitle}>{t('lists.select_target_list')}</Text>
+                <Text style={styles.modalSubtitle}>Select a target list</Text>
 
                 <FlatList
                   data={(lists || []).filter((l) => l.id !== selectedList.id)}
@@ -521,7 +562,7 @@ export default function ListsScreen() {
                   onPress={handleMoveConfirm}
                   disabled={!moveTargetListId}
                 >
-                  <Text style={styles.modalPrimaryText}>{t('common.continue')}</Text>
+                  <Text style={styles.modalPrimaryText}>Continue</Text>
                 </TouchableOpacity>
               </Pressable>
             </Pressable>
@@ -543,7 +584,7 @@ export default function ListsScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.title}>{t('lists.title')}</Text>
+          <Text style={styles.title}>My Lists</Text>
           <Text style={styles.subtitle}>
             {formatWords(totals.totalWords)} across {formatLists(totals.totalLists)}
           </Text>
@@ -558,7 +599,7 @@ export default function ListsScreen() {
             {!hasLists ? (
               <View style={styles.emptyState}>
                 <Ionicons name="folder-open-outline" size={28} color={COLORS.textMuted} />
-                <Text style={styles.emptyTitle}>{t('lists.empty_cta')}</Text>
+                <Text style={styles.emptyTitle}>Create your first list</Text>
                 <Text style={styles.emptySubtitle}>Start collecting words you want to remember.</Text>
                 <TouchableOpacity
                   style={styles.newListButton}
@@ -606,7 +647,7 @@ export default function ListsScreen() {
                           activeOpacity={0.8}
                         >
                           <Ionicons name="trash-outline" size={18} color={COLORS.surface} />
-                          <Text style={styles.swipeDeleteText}>{t('common.delete')}</Text>
+                          <Text style={styles.swipeDeleteText}>Delete</Text>
                         </TouchableOpacity>
                       )}
                       rightThreshold={40}
@@ -640,13 +681,13 @@ export default function ListsScreen() {
           <Pressable style={styles.overlay} onPress={() => setNewListModalVisible(false)}>
             <Pressable style={styles.modal} onPress={() => {}}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>{t('lists.new_list_btn')}</Text>
+                <Text style={styles.modalTitle}>New list</Text>
                 <TouchableOpacity onPress={() => setNewListModalVisible(false)}>
                   <Text style={styles.modalClose}>✕</Text>
                 </TouchableOpacity>
               </View>
 
-              <Text style={styles.modalSubtitle}>{t('lists.name_label')}</Text>
+              <Text style={styles.modalSubtitle}>Name</Text>
               <TextInput
                 value={newListName}
                 onChangeText={setNewListName}
@@ -764,19 +805,6 @@ const styles = StyleSheet.create({
   wordHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
   wordOriginal: { fontSize: 16, fontWeight: '500', color: COLORS.primary },
   wordTranslation: { fontSize: 13, color: COLORS.textMuted },
-  wordPair: {
-    marginTop: 2,
-    fontSize: 10,
-    color: COLORS.textHint,
-    fontWeight: '700',
-    letterSpacing: 0.2,
-  },
-  wordAltWrap: { marginTop: 6 },
-  wordAlt: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    lineHeight: 18,
-  },
   wordRight: { width: 100 },
 
   swipeDelete: {
@@ -869,4 +897,28 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { fontSize: 16, fontWeight: '600', color: COLORS.textPrimary, marginTop: 2 },
   emptySubtitle: { fontSize: 13, color: COLORS.textMuted, textAlign: 'center', lineHeight: 18 },
+
+  wordLang: {
+  marginTop: 5,
+  color: COLORS.textHint,
+  fontSize: 12,
+  fontWeight: '700',
+},
+  wordAltTranslations: {
+  marginTop: 12,
+},
+  wordAltText: {
+  color: COLORS.textSecondary,
+  fontSize: 12,
+  lineHeight: 16,
+  opacity: 0.9,
+  marginBottom: 2,
+},
+  wordAltNote: {
+  marginTop: 10,
+  color: COLORS.textSecondary,
+  fontSize: 12,
+  lineHeight: 16,
+},
+
 });
