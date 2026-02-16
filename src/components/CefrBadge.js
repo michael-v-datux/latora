@@ -43,7 +43,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 6,
     borderWidth: 1.5,
-    alignSelf: 'flex-start', // ширина за вмістом, а не на всю ширину
+    alignSelf: 'flex-end', // ширина за вмістом, а не на всю ширину
   },
   badgeSmall: {
     paddingHorizontal: 6,

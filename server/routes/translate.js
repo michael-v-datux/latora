@@ -14,9 +14,20 @@
 
 const express = require('express');
 const router = express.Router();
+
+router.get('/languages', async (req, res, next) => {
+  try {
+    const source = await getLanguages('source');
+    const target = await getLanguages('target');
+    return res.json({ source, target });
+  } catch (e) {
+    return next(e);
+  }
+});
+
 const { translateText, getLanguages } = require('../services/deepl');
 const { assessDifficulty } = require('../services/difficulty');
-const { enrichIdioms } = require('../services/idioms');
+const { detectIdioms } = require('../services/idioms');
 // public (anon) client: можна читати words, але писати в words після RLS — ні
 const supabase = require('../lib/supabase.server.cjs');
 // admin (service role) client: пишемо кеш words (bypasses RLS)
@@ -24,6 +35,15 @@ const supabaseAdmin = require('../lib/supabase.admin.cjs');
 
 const NOT_FOUND_MSG = 'Цього слова немає у словнику';
 
+
+function normalizeLang(code) {
+  return (code || '').trim().toUpperCase();
+}
+
+function baseLang(code) {
+  // ES-419 -> ES, EN-GB -> EN
+  return normalizeLang(code).split('-')[0];
+}
 function normalize(s) {
   return (s || '').trim().replace(/\s+/g, ' ');
 }
@@ -32,10 +52,16 @@ function looksLikeWord(input) {
   const s = normalize(input);
   if (s.length < 2 || s.length > 40) return false;
 
-  // Дозволяємо: будь-які літери (Unicode) + пробіли + апострофи + дефіси
-  // (під європейські мови з діакритикою)
-  const ok = /^[\p{L}\s'’\-–—\.]+$/u.test(s);
+  // Дозволяємо: латиниця/кирилиця + пробіли + апострофи + дефіси
+  const ok = /^[a-zA-Z\u0400-\u04FF\s'’-]+$/.test(s);
   if (!ok) return false;
+
+  // Відсікаємо латиницю без голосних (типу xqzvprm)
+  const isLatin = /^[a-zA-Z\s'’-]+$/.test(s);
+  if (isLatin) {
+    const hasVowel = /[aeiouy]/i.test(s);
+    if (!hasVowel) return false;
+  }
 
   return true;
 }
@@ -48,7 +74,7 @@ function isIdentityTranslation(original, translation) {
 
 router.post('/translate', async (req, res) => {
   try {
-    const { word, sourceLang, targetLang } = req.body;
+    const { word, source_lang, target_lang } = req.body;
 
     // Валідація
     if (!word || typeof word !== 'string' || word.trim().length === 0) {
@@ -58,8 +84,8 @@ router.post('/translate', async (req, res) => {
     const cleanWordRaw = normalize(word);
     const cleanWord = cleanWordRaw.toLowerCase();
 
-    const sl = String(sourceLang || 'EN').toUpperCase();
-    const tl = String(targetLang || 'UK').toUpperCase();
+    const srcLang = String(source_lang || 'EN').trim().toUpperCase();
+    const tgtLang = String(target_lang || 'UK').trim().toUpperCase();
 
     // Евристичний фільтр: не викликаємо DeepL і не кешуємо сміття
     if (!looksLikeWord(cleanWordRaw)) {
@@ -75,8 +101,8 @@ router.post('/translate', async (req, res) => {
       .from('words')
       .select('*')
       .eq('original', cleanWord)
-      .eq('source_lang', sl)
-      .eq('target_lang', tl)
+      .eq('source_lang', srcLang)
+      .eq('target_lang', tgtLang)
       .maybeSingle();
 
     if (cacheError) {
@@ -89,50 +115,74 @@ router.post('/translate', async (req, res) => {
     }
 
     // Крок 2: Переклад через DeepL
-    console.log(`🔤 Перекладаємо: "${cleanWord}" ${sl}→${tl}`);
-    const { translation } = await translateText(cleanWord, { sourceLang: sl, targetLang: tl });
+    console.log(`🔤 Перекладаємо: "${cleanWord}"`);
+    const { translation: deeplTranslation } = await translateText(cleanWord, srcLang, tgtLang);
 
     // Якщо DeepL повернув те саме — вважаємо "немає у словнику" і НЕ кешуємо
-    if (!translation || isIdentityTranslation(cleanWord, translation)) {
-      console.log(`🧹 Not caching identity/empty translation: "${cleanWord}" -> "${translation || ''}"`);
+    if (!deeplTranslation || isIdentityTranslation(cleanWord, deeplTranslation)) {
+      console.log(`🧹 Not caching identity/empty translation: "${cleanWord}" -> "${deeplTranslation || ''}"`);
       return res.json({
         error: NOT_FOUND_MSG,
         _source: 'deepl_identity',
       });
     }
 
+    // Крок 2.5: (опційно) Виявлення ідіом / сталих виразів через Claude
+    // ВАЖЛИВО: це НЕ повинно ламати базову логіку. Якщо Claude недоступний — просто повернеться is_idiom=false.
+    let idiom = { is_idiom: false, idiomatic_translations: [], note: '' };
+    try {
+      idiom = await detectIdioms({
+        original: cleanWordRaw,
+        sourceLang: srcLang,
+        targetLang: tgtLang,
+        literalTranslation: deeplTranslation,
+      });
+      if (idiom?.is_idiom) {
+        console.log(`🧩 Idiom detected: "${cleanWordRaw}" -> ${idiom.idiomatic_translations?.[0] || ''}`);
+      }
+    } catch (e) {
+      // Don't fail the whole request if idiom detection fails
+      console.warn('⚠️ Idiom detect error (non-fatal):', e?.message);
+    }
+
+    // Primary translation: idiomatic (if detected) otherwise DeepL literal
+    const primaryTranslation = (idiom && idiom.is_idiom && Array.isArray(idiom.idiomatic_translations) && idiom.idiomatic_translations[0])
+      ? idiom.idiomatic_translations[0]
+      : deeplTranslation;
+
     // Крок 3: AI-оцінка складності
     console.log(`🧠 Оцінюємо складність: "${cleanWord}"`);
-    const difficulty = await assessDifficulty(cleanWord, translation);
-
-    // Optional enrichment: idioms / set phrases
-    const idioms = await enrichIdioms({
-      original: cleanWordRaw,
-      baseTranslation: translation,
-      sourceLang: sl,
-      targetLang: tl,
-    });
+    const difficulty = await assessDifficulty(cleanWord, primaryTranslation);
 
     // Крок 4: Зберігаємо в базу
     const wordData = {
       original: cleanWord,
-      translation,
-      source_lang: sl,
-      target_lang: tl,
+      source_lang: srcLang,
+      target_lang: tgtLang,
+      translation: primaryTranslation,
       transcription: difficulty.transcription,
       difficulty_score: difficulty.difficulty_score,
       cefr_level: difficulty.cefr_level,
       difficulty_factors: difficulty.factors,
       example_sentence: difficulty.example_sentence,
       part_of_speech: difficulty.part_of_speech,
-      alt_translations: idioms?.alternatives || null,
-      translation_notes: idioms?.note || null,
-      translation_kind: idioms?.kind || null,
+
+      // Idiom metadata (optional)
+      alt_translations: (idiom && idiom.is_idiom)
+        ? Array.from(new Set([
+            // keep the full idiomatic list
+            ...(idiom.idiomatic_translations || []),
+            // also keep DeepL literal if different, for transparency
+            ...(deeplTranslation && !isIdentityTranslation(primaryTranslation, deeplTranslation) ? [deeplTranslation] : []),
+          ])).slice(0, 5)
+        : null,
+      translation_notes: (idiom && idiom.is_idiom) ? (idiom.note || null) : null,
+      translation_kind: (idiom && idiom.is_idiom) ? 'idiom' : null,
     };
 
     const { data: saved, error: saveError } = await supabaseAdmin
       .from('words')
-      // upsert щоб не падати на UNIQUE(original, source_lang, target_lang) у випадку гонки
+      // upsert щоб не падати на UNIQUE(original) у випадку гонки
       .upsert(wordData, { onConflict: 'original,source_lang,target_lang' })
       .select()
       .single();
@@ -149,19 +199,6 @@ router.post('/translate', async (req, res) => {
   } catch (error) {
     console.error('❌ Помилка перекладу:', error.message);
     return res.status(500).json({ error: error.message });
-  }
-});
-
-// GET /api/languages — DeepL supported languages (cached)
-router.get('/languages', async (req, res) => {
-  try {
-    const [source, target] = await Promise.all([
-      getLanguages('source'),
-      getLanguages('target'),
-    ]);
-    return res.json({ source, target });
-  } catch (e) {
-    return res.status(500).json({ error: e.message });
   }
 });
 

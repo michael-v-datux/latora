@@ -12,12 +12,12 @@ import { api } from "./apiClient";
 /**
  * Перекласти слово з англійської на українську + отримати оцінку складності
  */
-export async function translateWord(word, { sourceLang = 'EN', targetLang = 'UK' } = {}) {
+export async function translateWord(word, sourceLang = 'EN', targetLang = 'UK') {
   try {
     const response = await api.post("/translate", {
-      word: word.trim().toLowerCase(),
-      sourceLang,
-      targetLang,
+      word: word.trim(),
+      source_lang: sourceLang,
+      target_lang: targetLang,
     });
 
     return response.data;
@@ -48,4 +48,14 @@ export async function suggestList(wordId) {
     console.warn("Не вдалось отримати рекомендацію списку:", error.message);
     return null;
   }
+}
+
+
+/**
+ * Отримати підтримувані мови з бекенду (DeepL /languages)
+ * @returns {{source: Array, target: Array}}
+ */
+export async function fetchLanguages() {
+  const res = await api.get("/languages");
+  return res.data;
 }

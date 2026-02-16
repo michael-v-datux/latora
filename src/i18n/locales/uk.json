@@ -36,7 +36,7 @@
     "title": "Переклад",
     "subtitle": "Обери мови · за підтримки AI",
     "placeholder": "Введи слово або фразу...",
-    "hint": "Спробуй: serendipity · break a leg · reluctant",
+    "hint": "Порада: можна вводити фрази та ідіоми (наприклад, “break a leg”).",
     "cta": "Перекласти",
     "button": "Перекласти",
     "lang_picker_title": "Мови",
@@ -48,7 +48,12 @@
     "lang_search": "Пошук мови",
     "idiom_label": "ІДІОМАТИЧНЕ ЗНАЧЕННЯ",
     "variants_label": "АЛЬТЕРНАТИВИ",
-    "add_to_list_failed": "Не вдалося додати слово у список"
+    "add_to_list_failed": "Не вдалося додати слово у список",
+    "input_label": "Слово або фраза",
+    "powered_by_ai": "за підтримки AI",
+    "source_language": "Мова оригіналу",
+    "target_language": "Мова перекладу",
+    "lang_all": "Усі мови"
   },
   "word": {
     "difficulty": "СКЛАДНІСТЬ",
