@@ -39,28 +39,43 @@ import {
 } from '../services/listsService';
 
 // --- Helpers: normalize idiom fields coming from Supabase/HTTP ---
-const normalizeAltTranslations = (v) => {
-  if (!v) return [];
-  let arr = v;
+// --- Helpers: normalize idiom fields coming from Supabase/HTTP ---
+const parseAltTranslations = (v) => {
+  // Supported formats:
+  // 1) legacy: ["a","b"]  (or JSON string of that)
+  // 2) new: { idiomatic: ["a","b"], literal: "..." } (or JSON string)
+  if (!v) return { idiomatic: [], literal: '' };
 
-  if (typeof arr === 'string') {
-    try {
-      arr = JSON.parse(arr);
-    } catch {
-      return [];
-    }
+  let val = v;
+  if (typeof val === 'string') {
+    try { val = JSON.parse(val); } catch { return { idiomatic: [], literal: '' }; }
   }
 
-  if (!Array.isArray(arr)) return [];
+  const normalizeList = (arr) => {
+    if (!arr) return [];
+    return arr
+      .map((x) => {
+        if (!x) return '';
+        if (typeof x === 'string') return x.trim();
+        if (typeof x === 'object') return (x.text || x.translation || '').toString().trim();
+        return '';
+      })
+      .filter(Boolean);
+  };
 
-  return arr
-    .map((x) => {
-      if (!x) return '';
-      if (typeof x === 'string') return x.trim();
-      if (typeof x === 'object') return (x.text || x.translation || '').toString().trim();
-      return '';
-    })
-    .filter(Boolean);
+  // New format
+  if (val && typeof val === 'object' && !Array.isArray(val)) {
+    const idiomatic = normalizeList(val.idiomatic || val.variants || val.alt || []);
+    const literal = (val.literal || val.literal_translation || '').toString().trim();
+    return { idiomatic, literal };
+  }
+
+  // Legacy array
+  if (Array.isArray(val)) {
+    return { idiomatic: normalizeList(val), literal: '' };
+  }
+
+  return { idiomatic: [], literal: '' };
 };
 
 const isIdiomatic = (item) => {
@@ -74,6 +89,7 @@ export default function ListsScreen() {
   const [lists, setLists] = useState([]);
   const [selectedList, setSelectedList] = useState(null);
   const [selectedWords, setSelectedWords] = useState([]);
+  const [idiomViewById, setIdiomViewById] = useState({});
   const [loadingLists, setLoadingLists] = useState(true);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -421,16 +437,70 @@ export default function ListsScreen() {
                       {(item.source_lang || item.target_lang) && (
                         <Text style={styles.wordLang}>{(item.source_lang || 'EN')} → {(item.target_lang || 'UK')}</Text>
                       )}
-                      {(isIdiomatic(item) && normalizeAltTranslations(item.alt_translations).length > 0) && (
-                        <View style={styles.wordAltTranslations}>
-                          {normalizeAltTranslations(item.alt_translations).map((t, i) => (
-                            <Text key={`${item.id}-alt-${i}`} style={styles.wordAltText}>• {t}</Text>
-                          ))}
-                          {!!item.translation_notes && (
-                            <Text style={styles.wordAltNote}>{item.translation_notes}</Text>
-                          )}
-                        </View>
-                      )}
+{(() => {
+  if (!isIdiomatic(item)) return null;
+
+  const meta = parseAltTranslations(item.alt_translations);
+  const idiomaticList = meta.idiomatic || [];
+  const hasIdiomatic = idiomaticList.length > 0;
+
+  // Backward-compatible: older records may not have literal stored.
+  // If we have idiomatic variants but no literal, fall back to current main translation as "literal".
+  const literalText = (meta.literal || '').toString().trim() || (hasIdiomatic ? (item.translation || '').toString().trim() : '');
+  const hasLiteral = !!literalText;
+
+  const hasAny = hasIdiomatic || hasLiteral;
+  if (!hasAny && !item.translation_notes) return null;
+
+  const view = idiomViewById[item.id] || 'idiomatic';
+  const effectiveView = hasIdiomatic ? view : 'literal';
+  const showToggle = hasIdiomatic && hasLiteral;
+
+  return (
+    <View style={styles.wordAltTranslations}>
+      <View style={styles.idiomHeaderRow}>
+        {/* On Lists screen: show the label only when there's NO idiomatic meaning */}
+        {!hasIdiomatic && (
+          <Text style={styles.wordAltLabel}>Буквально</Text>
+        )}
+
+        {showToggle && (
+          <View style={styles.idiomToggle}>
+            <TouchableOpacity
+              onPress={() => setIdiomViewById((prev) => ({ ...prev, [item.id]: 'idiomatic' }))}
+              style={[styles.idiomToggleBtn, effectiveView === 'idiomatic' && styles.idiomToggleBtnActive]}
+            >
+              <Text style={[styles.idiomToggleText, effectiveView === 'idiomatic' && styles.idiomToggleTextActive]}>
+                Idiomatic
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setIdiomViewById((prev) => ({ ...prev, [item.id]: 'literal' }))}
+              style={[styles.idiomToggleBtn, effectiveView === 'literal' && styles.idiomToggleBtnActive]}
+            >
+              <Text style={[styles.idiomToggleText, effectiveView === 'literal' && styles.idiomToggleTextActive]}>
+                Literal
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+
+      {effectiveView === 'literal' && hasLiteral && (
+        <Text style={styles.wordAltText}>• {literalText}</Text>
+      )}
+
+      {effectiveView === 'idiomatic' && idiomaticList.map((t, i) => (
+        <Text key={`${item.id}-alt-${i}`} style={styles.wordAltText}>• {t}</Text>
+      ))}
+
+      {/* Hide idiom explanation on Literal */}
+      {!!item.translation_notes && effectiveView !== 'literal' && (
+        <Text style={styles.wordAltNote}>{item.translation_notes}</Text>
+      )}
+    </View>
+  );
+})()}
                     </View>
                     <View style={styles.wordRight}>
                       <DifficultyBar score={item.score} />
@@ -906,6 +976,43 @@ const styles = StyleSheet.create({
 },
   wordAltTranslations: {
   marginTop: 12,
+},
+
+  wordAltLabel: {
+  color: COLORS.textHint,
+  fontSize: 11,
+  fontWeight: '800',
+  letterSpacing: 0.8,
+  textTransform: 'uppercase',
+},
+  idiomHeaderRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  marginBottom: 8,
+},
+  idiomToggle: {
+  flexDirection: 'row',
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  borderRadius: 999,
+  overflow: 'hidden',
+  backgroundColor: COLORS.surface,
+},
+  idiomToggleBtn: {
+  paddingHorizontal: 10,
+  paddingVertical: 6,
+},
+  idiomToggleBtnActive: {
+  backgroundColor: COLORS.card,
+},
+  idiomToggleText: {
+  color: COLORS.textHint,
+  fontSize: 11,
+  fontWeight: '700',
+},
+  idiomToggleTextActive: {
+  color: COLORS.textPrimary,
 },
   wordAltText: {
   color: COLORS.textSecondary,

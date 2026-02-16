@@ -13,28 +13,50 @@
  *   <WordCard word={wordObject} onAddToList={() => ...} />
  */
 
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import CefrBadge from './CefrBadge';
 import DifficultyBar from './DifficultyBar';
 import { COLORS, CEFR_COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
 // --- Helpers: normalize idiom fields coming from Supabase/HTTP ---
-const normalizeAltTranslations = (v) => {
-  if (!v) return [];
-  let arr = v;
-  if (typeof arr === 'string') {
-    try { arr = JSON.parse(arr); } catch { return []; }
-  }
-  if (!Array.isArray(arr)) return [];
-  return arr
-    .map((x) => {
-      if (typeof x === 'string') return x.trim();
-      if (x && typeof x === 'object') return (x.text || x.translation || '').toString().trim();
-      return '';
-    })
-    .filter(Boolean);
-};
+// --- Helpers: normalize idiom fields coming from Supabase/HTTP ---
+const parseAltTranslations = (v) => {
+  // Supported formats:
+  // 1) legacy: ["a","b"]  (or JSON string of that)
+  // 2) new: { idiomatic: ["a","b"], literal: "..." } (or JSON string)
+  if (!v) return { idiomatic: [], literal: '' };
 
+  let val = v;
+  if (typeof val === 'string') {
+    try { val = JSON.parse(val); } catch { return { idiomatic: [], literal: '' }; }
+  }
+
+  const normalizeList = (arr) => {
+    if (!arr) return [];
+    return arr
+      .map((x) => {
+        if (!x) return '';
+        if (typeof x === 'string') return x.trim();
+        if (typeof x === 'object') return (x.text || x.translation || '').toString().trim();
+        return '';
+      })
+      .filter(Boolean);
+  };
+
+  // New format
+  if (val && typeof val === 'object' && !Array.isArray(val)) {
+    const idiomatic = normalizeList(val.idiomatic || val.variants || val.alt || []);
+    const literal = (val.literal || val.literal_translation || '').toString().trim();
+    return { idiomatic, literal };
+  }
+
+  // Legacy array
+  if (Array.isArray(val)) {
+    return { idiomatic: normalizeList(val), literal: '' };
+  }
+
+  return { idiomatic: [], literal: '' };
+};
 const isIdiomatic = (word) => {
   const kind = (word?.translation_kind || '').toString().toLowerCase();
   const pos = (word?.part_of_speech || word?.pos || '').toString().toLowerCase();
@@ -43,6 +65,9 @@ const isIdiomatic = (word) => {
 
 export default function WordCard({ word, onAddToList, isAdded = false }) {
   if (!word) return null;
+  const idiomMeta = useMemo(() => parseAltTranslations(word?.alt_translations), [word?.alt_translations]);
+  const [idiomView, setIdiomView] = useState('idiomatic');
+  const showIdiomToggle = isIdiomatic(word) && (idiomMeta.literal && idiomMeta.idiomatic.length > 0);
 
   return (
     <View style={styles.card}>
@@ -66,17 +91,50 @@ export default function WordCard({ word, onAddToList, isAdded = false }) {
         <Text style={styles.translation}>{word.translation}</Text>
       </View>
 
-      {(isIdiomatic(word) && normalizeAltTranslations(word.alt_translations).length > 0) && (
-        <View style={styles.altBox}>
-          <Text style={styles.altLabel}>Ідіоматично</Text>
-          {normalizeAltTranslations(word.alt_translations).map((t, i) => (
-            <Text key={`${i}-${t}`} style={styles.altText}>• {t}</Text>
-          ))}
-          {!!word.translation_notes && (
-            <Text style={styles.altNote}>{word.translation_notes}</Text>
-          )}
+      {(isIdiomatic(word) && (idiomMeta.idiomatic.length > 0 || !!idiomMeta.literal)) && (
+  <View style={styles.altBox}>
+    <View style={styles.idiomHeaderRow}>
+      <Text style={styles.altLabel}>{idiomView === 'literal' ? 'Буквально' : 'Ідіоматично'}</Text>
+
+      {showIdiomToggle && (
+        <View style={styles.idiomToggle}>
+          <TouchableOpacity
+            onPress={() => setIdiomView('idiomatic')}
+            style={[styles.idiomToggleBtn, idiomView === 'idiomatic' && styles.idiomToggleBtnActive]}
+          >
+            <Text style={[styles.idiomToggleText, idiomView === 'idiomatic' && styles.idiomToggleTextActive]}>
+              Idiomatic
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setIdiomView('literal')}
+            style={[styles.idiomToggleBtn, idiomView === 'literal' && styles.idiomToggleBtnActive]}
+          >
+            <Text style={[styles.idiomToggleText, idiomView === 'literal' && styles.idiomToggleTextActive]}>
+              Literal
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
+    </View>
+
+    {idiomView === 'literal' && !!idiomMeta.literal && (
+      <Text style={styles.altText}>• {idiomMeta.literal}</Text>
+    )}
+
+    {(idiomView !== 'literal' || !idiomMeta.literal) && (
+      <>
+        {idiomMeta.idiomatic.map((t, i) => (
+          <Text key={`${i}-${t}`} style={styles.altText}>• {t}</Text>
+        ))}
+      </>
+    )}
+
+    {!!word.translation_notes && idiomView !== 'literal' && (
+      <Text style={styles.altNote}>{word.translation_notes}</Text>
+    )}
+  </View>
+)}
 
       {/* Складність */}
       <View style={styles.section}>
@@ -228,7 +286,36 @@ altLabel: {
   fontWeight: '800',
   letterSpacing: 0.8,
   textTransform: 'uppercase',
+  marginBottom: 0,
+},
+idiomHeaderRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
   marginBottom: 8,
+},
+idiomToggle: {
+  flexDirection: 'row',
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  borderRadius: 999,
+  overflow: 'hidden',
+  backgroundColor: COLORS.surface,
+},
+idiomToggleBtn: {
+  paddingHorizontal: 10,
+  paddingVertical: 6,
+},
+idiomToggleBtnActive: {
+  backgroundColor: COLORS.card,
+},
+idiomToggleText: {
+  color: COLORS.textHint,
+  fontSize: 11,
+  fontWeight: '700',
+},
+idiomToggleTextActive: {
+  color: COLORS.textPrimary,
 },
 altText: {
   color: COLORS.textPrimary,

@@ -58,7 +58,12 @@ async function detectIdioms({
   literalTranslation,
 }) {
   if (!anthropic) {
-    return { is_idiom: false, idiomatic_translations: [], note: "" };
+    return {
+      is_idiom: false,
+      idiomatic_translations: [],
+      note: "",
+      literal_translation: (literalTranslation || "").trim(),
+    };
   }
 
   const o = (original || "").trim();
@@ -84,15 +89,13 @@ DEEPL_LITERAL_TRANSLATION: "${(literalTranslation || "").trim()}"
 
 Rules:
 - Return ONLY JSON object with keys: is_idiom (boolean), idiomatic_translations (array of strings), note (string).
-- note: short (<= 140 chars). Empty string if not idiom.
+- note: Write the explanation in TARGET language (short, <= 140 chars). Empty string if not idiom.
 - idiomatic_translations: distinct, natural, no quotes in strings besides normal punctuation.
 `;
 
   try {
     const resp = await anthropic.messages.create({
-      // NOTE: "*-latest" aliases may be unavailable or removed.
-      // Prefer a stable, versioned model id. Override via CLAUDE_MODEL_ID.
-      // Anthropic recommends Haiku 4.5 as a replacement for deprecated Haiku 3.5.
+      // Use env override when provided; keep a safe default that exists.
       model: process.env.CLAUDE_MODEL_ID || "claude-haiku-4-5-20251001",
       max_tokens: 300,
       temperature: 0.2,
@@ -118,18 +121,16 @@ Rules:
       is_idiom: !!obj.is_idiom && idioms.length > 0,
       idiomatic_translations: idioms,
       note: typeof obj.note === "string" ? obj.note.trim().slice(0, 140) : "",
+      literal_translation: (literalTranslation || "").trim(),
     };
   } catch (e) {
-    // Non-fatal: we never want idiom detection to break translation.
-    // Log a bit more context when available.
-    const status = e?.status || e?.response?.status;
-    const body = e?.response?.data || e?.response?.body;
-    if (status) {
-      console.warn(`⚠️ Idiom detect error: ${status}`, body ? JSON.stringify(body).slice(0, 300) : e?.message);
-    } else {
-      console.warn("⚠️ Idiom detect error:", e?.message);
-    }
-    return { is_idiom: false, idiomatic_translations: [], note: "" };
+    console.warn("⚠️ Idiom detect error:", e?.message);
+    return {
+      is_idiom: false,
+      idiomatic_translations: [],
+      note: "",
+      literal_translation: (literalTranslation || "").trim(),
+    };
   }
 }
 
