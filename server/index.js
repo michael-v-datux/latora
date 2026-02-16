@@ -13,6 +13,7 @@
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 
 // Завантажуємо змінні з .env файлу
 require('dotenv').config();
@@ -21,6 +22,7 @@ require("./lib/env");
 const translateRoutes = require('./routes/translate');
 const listsRoutes = require('./routes/lists');
 const practiceRoutes = require('./routes/practice');
+const languagesRoutes = require('./routes/languages');
 
 const errorHandler = require("./middleware/error");
 
@@ -53,6 +55,7 @@ app.use('/api/translate', translateLimiter);
 app.use('/api', translateRoutes);
 app.use('/api', listsRoutes);
 app.use('/api', practiceRoutes);
+app.use('/api', languagesRoutes);
 
 // === Health check (перевірка що сервер працює) ===
 app.get('/api/health', (req, res) => {

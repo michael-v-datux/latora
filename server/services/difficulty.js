@@ -21,6 +21,56 @@ try {
   console.warn('⚠️ Anthropic API не налаштовано. AI-оцінка буде недоступна.');
 }
 
+
+/**
+ * Claude інколи обгортає JSON у markdown-блоки ```json ... ```
+ * або додає зайвий текст. Ця функція робить парсинг "production-safe".
+ */
+function parseClaudeJson(rawText) {
+  if (!rawText || typeof rawText !== 'string') {
+    throw new Error('Claude returned empty response');
+  }
+
+  let text = rawText.trim();
+
+  // 1) Знімаємо markdown code fences, якщо вони є
+  //    ```json\n{...}\n``` або ```\n{...}\n```
+  // Claude іноді додає текст ДО fence — тоді витягуємо перший fenced-блок.
+  if (text.includes('```')) {
+    const fenceStart = text.indexOf('```');
+    const fenceEnd = text.indexOf('```', fenceStart + 3);
+    if (fenceStart !== -1 && fenceEnd !== -1 && fenceEnd > fenceStart) {
+      let inner = text.slice(fenceStart + 3, fenceEnd).trim();
+      inner = inner.replace(/^json\s*/i, '').trim();
+      text = inner;
+    } else if (text.startsWith('```')) {
+      text = text.replace(/^```(?:json)?\s*/i, '');   // прибираємо відкриваючий fence
+      text = text.replace(/\s*```\s*$/i, '');        // прибираємо закриваючий fence
+      text = text.trim();
+    }
+  }
+
+  // 2) Перша спроба — чистий JSON
+  try {
+    return JSON.parse(text);
+  } catch (e1) {
+    // 3) Друга спроба — витягуємо перший JSON-обʼєкт з тексту
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start !== -1 && end !== -1 && end > start) {
+      const candidate = text.slice(start, end + 1);
+      try {
+        return JSON.parse(candidate);
+      } catch (e2) {
+        // fallthrough
+      }
+    }
+    // 4) Повертаємо оригінальну помилку, але з коротким превʼю відповіді для дебагу
+    const preview = text.slice(0, 200).replace(/\s+/g, ' ');
+    throw new Error(`Claude response is not valid JSON: ${e1.message}. Preview: "${preview}"`);
+  }
+}
+
 /**
  * Оцінити складність англійського слова для українськомовного студента
  * 
@@ -83,7 +133,7 @@ Rules:
 
     // Парсимо JSON-відповідь від Claude
     const responseText = message.content[0].text.trim();
-    const aiResult = JSON.parse(responseText);
+    const aiResult = parseClaudeJson(responseText);
 
     // Комбінуємо базову та AI оцінку (70% AI, 30% базова)
     const combinedScore = Math.round(aiResult.difficulty_score * 0.7 + baseScore * 0.3);

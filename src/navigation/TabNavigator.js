@@ -14,6 +14,7 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';  // Безкоштовні іконки від Expo
 import { COLORS } from '../utils/constants';
+import { useI18n } from '../i18n';
 
 // Імпортуємо екрани
 import TranslateScreen from '../screens/TranslateScreen';
@@ -25,6 +26,7 @@ import ProfileScreen from '../screens/ProfileScreen';
 const Tab = createBottomTabNavigator();
 
 export default function TabNavigator() {
+  const { t } = useI18n();
   return (
     <Tab.Navigator
       // Глобальні налаштування для всіх вкладок
@@ -71,10 +73,10 @@ export default function TabNavigator() {
       })}
     >
       {/* Кожен Tab.Screen — це одна вкладка */}
-      <Tab.Screen name="Translate" component={TranslateScreen} />
-      <Tab.Screen name="Lists" component={ListsScreen} />
-      <Tab.Screen name="Practice" component={PracticeScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen name="Translate" component={TranslateScreen} options={{ tabBarLabel: t('tabs.translate') }} />
+      <Tab.Screen name="Lists" component={ListsScreen} options={{ tabBarLabel: t('tabs.lists') }} />
+      <Tab.Screen name="Practice" component={PracticeScreen} options={{ tabBarLabel: t('tabs.practice') }} />
+      <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarLabel: t('tabs.profile') }} />
     </Tab.Navigator>
   );
 }

@@ -17,8 +17,10 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "../utils/constants";
 import { useAuth } from "../hooks/useAuth";
+import { useI18n } from "../i18n";
 
 export default function AuthScreen() {
+  const { t } = useI18n();
   const { signIn, signUp, signInWithGoogle, signInWithApple } = useAuth();
 
   const [mode, setMode] = useState("signin"); // signin | signup
@@ -39,11 +41,11 @@ export default function AuthScreen() {
         await signIn(email.trim(), password);
       } else {
         await signUp(email.trim(), password);
-        Alert.alert("Готово", "Акаунт створено. Тепер можна увійти.");
+        Alert.alert(t("auth.done_title"), t("auth.account_created"));
         setMode("signin");
       }
     } catch (e) {
-      Alert.alert("Помилка", e.message);
+      Alert.alert(t("common.error"), e.message);
     } finally {
       setBusy(false);
     }
@@ -79,7 +81,7 @@ export default function AuthScreen() {
       <View style={styles.card}>
         <Text style={styles.title}>LexiLevel</Text>
         <Text style={styles.subtitle}>
-          {isSignIn ? "Увійди, щоб бачити свої списки" : "Створи акаунт, щоб зберігати прогрес"}
+          {isSignIn ? t("auth.subtitle_signin") : t("auth.subtitle_signup")}
         </Text>
 
         <View style={styles.segment}>
@@ -88,20 +90,20 @@ export default function AuthScreen() {
             onPress={() => setMode("signin")}
             disabled={busy}
           >
-            <Text style={[styles.segmentText, isSignIn && styles.segmentTextActive]}>Вхід</Text>
+            <Text style={[styles.segmentText, isSignIn && styles.segmentTextActive]}>{t("auth.signin")}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.segmentBtn, !isSignIn && styles.segmentBtnActive]}
             onPress={() => setMode("signup")}
             disabled={busy}
           >
-            <Text style={[styles.segmentText, !isSignIn && styles.segmentTextActive]}>Реєстрація</Text>
+            <Text style={[styles.segmentText, !isSignIn && styles.segmentTextActive]}>{t("auth.signup")}</Text>
           </TouchableOpacity>
         </View>
 
         <TextInput
           style={styles.input}
-          placeholder="Email"
+          placeholder={t("auth.email")}
           placeholderTextColor={COLORS.textMuted}
           autoCapitalize="none"
           keyboardType="email-address"
@@ -111,7 +113,7 @@ export default function AuthScreen() {
         />
         <TextInput
           style={styles.input}
-          placeholder="Пароль (мін. 6 символів)"
+          placeholder={t("auth.password")}
           placeholderTextColor={COLORS.textMuted}
           secureTextEntry
           value={password}
@@ -127,24 +129,24 @@ export default function AuthScreen() {
           {busy ? (
             <ActivityIndicator />
           ) : (
-            <Text style={styles.primaryBtnText}>{isSignIn ? "Увійти" : "Зареєструватись"}</Text>
+            <Text style={styles.primaryBtnText}>{isSignIn ? t("auth.signin_btn") : t("auth.signup_btn")}</Text>
           )}
         </TouchableOpacity>
 
         <View style={styles.dividerRow}>
           <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>або</Text>
+          <Text style={styles.dividerText}>{t("common.or")}</Text>
           <View style={styles.dividerLine} />
         </View>
 
         <TouchableOpacity style={styles.oauthBtn} onPress={onGoogle} disabled={busy}>
           <Ionicons name="logo-google" size={18} color={COLORS.text} />
-          <Text style={styles.oauthText}>Continue with Google</Text>
+          <Text style={styles.oauthText}>{t("auth.continue_google")}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.oauthBtn} onPress={onApple} disabled={busy}>
           <Ionicons name="logo-apple" size={18} color={COLORS.text} />
-          <Text style={styles.oauthText}>Continue with Apple</Text>
+          <Text style={styles.oauthText}>{t("auth.continue_apple")}</Text>
         </TouchableOpacity>
 
         <Text style={styles.hint}>

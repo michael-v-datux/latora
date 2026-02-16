@@ -12,10 +12,12 @@ import { api } from "./apiClient";
 /**
  * Перекласти слово з англійської на українську + отримати оцінку складності
  */
-export async function translateWord(word) {
+export async function translateWord(word, { sourceLang = 'EN', targetLang = 'UK' } = {}) {
   try {
     const response = await api.post("/translate", {
       word: word.trim().toLowerCase(),
+      sourceLang,
+      targetLang,
     });
 
     return response.data;
