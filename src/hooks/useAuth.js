@@ -15,28 +15,31 @@
  *
  * IMPORTANT:
  * - app.json must include: { "expo": { "scheme": "lexilevel" } }
- * - Supabase → Auth → URL Configuration:
- *   - Site URL (for Expo Go dev): https://auth.expo.io/@bill_lava/LexiLevel
- *   - Additional Redirect URLs:
- *       https://auth.expo.io/@bill_lava/LexiLevel
- *       lexilevel://auth/callback
- *       lexilevel://
+ * - Supabase → Auth → URL Configuration (Redirect URLs):
+ *     https://auth.expo.io/@bill_lava/LexiLevel
+ *     lexilevel://auth/callback
+ *     lexilevel://
  */
 
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
-import * as Crypto from "expo-crypto";
+import * as WebBrowser from "expo-web-browser";
 
 import { supabase } from "../config/supabase";
+
+WebBrowser.maybeCompleteAuthSession();
 
 const AuthContext = createContext(null);
 
 // Expo Go detection
 const isExpoGo = Constants.appOwnership === "expo";
 
-// ✅ Fixed proxy redirect for Expo Go to avoid localhost / --/ path variations
+// Fixed proxy redirect for Expo Go to avoid localhost / --/ path variations
 const EXPO_PROXY_REDIRECT = "https://auth.expo.io/@bill_lava/LexiLevel";
+
+// Toggle to see OAuth flow details
+const DEBUG_OAUTH = true;
 
 function friendlyAuthError(err) {
   const msg = err?.message || "Auth error";
@@ -46,6 +49,7 @@ function friendlyAuthError(err) {
   if (/Password should be at least/i.test(msg)) return "Пароль має бути мінімум 6 символів";
   if (/Email not confirmed/i.test(msg)) return "Підтвердіть email у листі (якщо увімкнено підтвердження)";
   if (/OAuth was cancelled/i.test(msg)) return "Вхід скасовано";
+  if (/invalid flow state/i.test(msg)) return "OAuth стан зламався (flow state). Спробуй ще раз або перезапусти апку.";
 
   // Common redirect whitelist errors
   if (/redirect/i.test(msg) && /not allowed|not permitted|invalid/i.test(msg)) {
@@ -55,24 +59,17 @@ function friendlyAuthError(err) {
   return msg;
 }
 
-async function ensureOAuthDeps() {
+async function ensureAuthSession() {
   try {
-    const WebBrowserMod = await import("expo-web-browser");
     const AuthSessionMod = await import("expo-auth-session");
-
-    // Dynamic import інколи кладе експорт у .default
-    const WebBrowser = WebBrowserMod?.default ?? WebBrowserMod;
-    const AuthSession = AuthSessionMod?.default ?? AuthSessionMod;
-
-    return { WebBrowser, AuthSession };
+    // dynamic import інколи кладе експорт у .default
+    return AuthSessionMod?.default ?? AuthSessionMod;
   } catch (_e) {
     const help =
       "Для входу через Google/Apple встанови пакети:\n" +
-      "  npx expo install expo-auth-session expo-web-browser expo-crypto\n" +
+      "  npx expo install expo-auth-session expo-web-browser\n" +
       "і налаштуй Redirect URLs у Supabase (Auth → URL Configuration).";
-    const err = new Error(help);
-    err.code = "OAUTH_DEPS_MISSING";
-    throw err;
+    throw new Error(help);
   }
 }
 
@@ -87,21 +84,73 @@ function getRedirectTo(AuthSession) {
   });
 }
 
-async function signInWithOAuthProvider(provider) {
-  const { WebBrowser, AuthSession } = await ensureOAuthDeps();
+function parseImplicitTokensFromUrl(url) {
+  // implicit returns tokens in fragment: #access_token=...&refresh_token=...
+  const hashIndex = url.indexOf("#");
+  if (hashIndex === -1) return null;
 
-  WebBrowser.maybeCompleteAuthSession?.();
+  const fragment = url.slice(hashIndex + 1);
+  const params = new URLSearchParams(fragment);
+
+  const access_token = params.get("access_token");
+  const refresh_token = params.get("refresh_token");
+
+  if (!access_token || !refresh_token) return null;
+  return { access_token, refresh_token };
+}
+
+async function finalizeOAuthRedirect(resUrl) {
+  // Prefer PKCE code flow if present
+  if (resUrl.includes("?code=") || resUrl.includes("&code=")) {
+    let code = null;
+
+    try {
+      code = new URL(resUrl).searchParams.get("code");
+    } catch {
+      // на всякий випадок, якщо URL не парситься
+      const match = resUrl.match(/[?&]code=([^&]+)/);
+      code = match?.[1] ?? null;
+    }
+
+    if (!code) throw new Error("OAuth redirect did not include code");
+
+    // ✅ ВАЖЛИВО: передаємо тільки code, не весь URL
+    const { data: exchanged, error: exErr } = await supabase.auth.exchangeCodeForSession(code);
+    if (exErr) throw exErr;
+
+    return exchanged?.session ?? true;
+  }
+
+  // Fallback: implicit tokens in hash
+  if (resUrl.includes("#access_token=")) {
+    const tokens = parseImplicitTokensFromUrl(resUrl);
+    if (!tokens) throw new Error("OAuth tokens missing in redirect URL");
+
+    const { data: setData, error: setErr } = await supabase.auth.setSession(tokens);
+    if (setErr) throw setErr;
+
+    return setData?.session ?? true;
+  }
+
+  // Unknown result
+  throw new Error("OAuth redirect URL did not contain code or tokens");
+}
+
+async function signInWithOAuthProvider(provider) {
+  const AuthSession = await ensureAuthSession();
 
   const redirectTo = getRedirectTo(AuthSession);
 
-  // 🔎 Debug if needed:
-  console.log("isExpoGo:", isExpoGo);
-  console.log("redirectTo:", redirectTo);
+  if (DEBUG_OAUTH) {
+    console.log("isExpoGo:", isExpoGo);
+    console.log("redirectTo:", redirectTo);
+  }
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider,
     options: {
       redirectTo,
+      // RN — don't let supabase-js try to redirect like a web browser
       skipBrowserRedirect: true,
     },
   });
@@ -109,20 +158,19 @@ async function signInWithOAuthProvider(provider) {
   if (error) throw error;
   if (!data?.url) throw new Error("OAuth URL was not returned");
 
-  // 🔎 Debug if needed:
-  // console.log("supabase oauth url:", data.url);
-
+  // Open auth in browser and return to redirectTo
   const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+
+  if (DEBUG_OAUTH) {
+    console.log("openAuthSessionAsync:", res?.type, res?.url ? res.url.slice(0, 140) : null);
+  }
 
   if (res.type !== "success" || !res.url) {
     throw new Error("OAuth was cancelled");
   }
 
-  // PKCE: exchange code for session
-  const { data: exchanged, error: exErr } = await supabase.auth.exchangeCodeForSession(res.url);
-  if (exErr) throw exErr;
-
-  return exchanged?.session ?? true;
+  // Finalize: PKCE (?code=) or implicit (#access_token=)
+  return await finalizeOAuthRedirect(res.url);
 }
 
 export function AuthProvider({ children }) {
