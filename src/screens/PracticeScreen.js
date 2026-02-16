@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import CefrBadge from '../components/CefrBadge';
 import { calculateNextReview } from '../services/srsService';
 import { COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
+import { useI18n } from '../i18n';
 
 // Тимчасові дані для повторення
 const PRACTICE_WORDS = [
@@ -41,6 +42,7 @@ const ANSWER_BUTTONS = [
 ];
 
 export default function PracticeScreen() {
+  const { t } = useI18n();
   const [started, setStarted] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -83,8 +85,8 @@ export default function PracticeScreen() {
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
           <View style={styles.header}>
-            <Text style={styles.title}>Practice</Text>
-            <Text style={styles.subtitle}>Spaced repetition · SM-2</Text>
+            <Text style={styles.title}>{t('practice.title')}</Text>
+            <Text style={styles.subtitle}>{t('practice.subtitle')}</Text>
           </View>
 
           {/* Статистика */}
@@ -102,12 +104,12 @@ export default function PracticeScreen() {
               ))}
             </View>
             <TouchableOpacity style={styles.startButton} onPress={() => setStarted(true)} activeOpacity={0.7}>
-              <Text style={styles.startButtonText}>Start session</Text>
+              <Text style={styles.startButtonText}>{t('practice.start_session')}</Text>
             </TouchableOpacity>
           </View>
 
           {/* Вибір списку */}
-          <Text style={styles.sectionLabel}>OR CHOOSE A LIST</Text>
+          <Text style={styles.sectionLabel}>{t('practice.choose_list')}</Text>
           {MOCK_LISTS.map(list => (
             <TouchableOpacity
               key={list.id}
@@ -134,19 +136,19 @@ export default function PracticeScreen() {
           <View style={styles.checkCircle}>
             <Text style={styles.checkMark}>✓</Text>
           </View>
-          <Text style={styles.finishedTitle}>Session complete</Text>
+          <Text style={styles.finishedTitle}>{t('practice.session_complete')}</Text>
 
           <View style={styles.resultsGrid}>
             {ANSWER_BUTTONS.map(btn => (
               <View key={btn.key} style={[styles.resultCard, { backgroundColor: btn.bg }]}>
                 <Text style={[styles.resultNumber, { color: btn.color }]}>{stats[btn.key]}</Text>
-                <Text style={styles.resultLabel}>{btn.label}</Text>
+                <Text style={styles.resultLabel}>{t(`practice.answer.${btn.key}`)}</Text>
               </View>
             ))}
           </View>
 
           <TouchableOpacity style={styles.doneButton} onPress={reset} activeOpacity={0.7}>
-            <Text style={styles.doneButtonText}>Done</Text>
+            <Text style={styles.doneButtonText}>{t('common.done')}</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -182,7 +184,7 @@ export default function PracticeScreen() {
             <Text style={styles.flashcardTranscription}>{word.transcription}</Text>
 
             {!revealed && (
-              <Text style={styles.tapHint}>Tap to reveal</Text>
+              <Text style={styles.tapHint}>{t('practice.tap_to_reveal')}</Text>
             )}
 
             {revealed && (
@@ -204,7 +206,7 @@ export default function PracticeScreen() {
                   onPress={() => handleAnswer(btn.key)}
                   activeOpacity={0.6}
                 >
-                  <Text style={[styles.answerButtonText, { color: btn.color }]}>{btn.label}</Text>
+                  <Text style={[styles.answerButtonText, { color: btn.color }]}>{t(`practice.answer.${btn.key}`)}</Text>
                 </TouchableOpacity>
               ))}
             </View>

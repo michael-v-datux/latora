@@ -8,6 +8,8 @@ module.exports = {
   PORT: process.env.PORT || 3001,
   SUPABASE_URL: required("SUPABASE_URL"),
   SUPABASE_ANON_KEY: required("SUPABASE_ANON_KEY"),
+  // потрібен для server-side запису в words (кеш перекладів) після ввімкнення RLS
+  SUPABASE_SERVICE_ROLE_KEY: required("SUPABASE_SERVICE_ROLE_KEY"),
   DEEPL_API_KEY: required("DEEPL_API_KEY"),
   // якщо використовуєш Anthropic у difficulty:
   // ANTHROPIC_API_KEY: required("ANTHROPIC_API_KEY"),

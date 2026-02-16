@@ -18,9 +18,18 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import CefrBadge from './CefrBadge';
 import DifficultyBar from './DifficultyBar';
 import { COLORS, CEFR_COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
+import { useI18n } from '../i18n';
+import { pairLabel } from '../utils/languages';
 
 export default function WordCard({ word, onAddToList, isAdded = false }) {
+  const { t } = useI18n();
   if (!word) return null;
+
+  const sourceLang = word.source_lang || word.sourceLang;
+  const targetLang = word.target_lang || word.targetLang;
+  const alt = Array.isArray(word.alt_translations) ? word.alt_translations : (Array.isArray(word.altTranslations) ? word.altTranslations : []);
+  const note = word.translation_notes || word.translationNotes;
+  const kind = word.translation_kind || word.translationKind;
 
   return (
     <View style={styles.card}>
@@ -38,19 +47,40 @@ export default function WordCard({ word, onAddToList, isAdded = false }) {
 
       {/* Переклад */}
       <View style={[styles.translationBox, { borderLeftColor: (CEFR_COLORS[word.cefr_level || word.cefr] || '#94a3b8') + '50' }]}>
-        <Text style={styles.translation}>{word.translation}</Text>
+        <View style={styles.translationTopRow}>
+          <Text style={styles.translation}>{word.translation}</Text>
+          {(sourceLang && targetLang) && (
+            <View style={styles.pairBadge}>
+              <Text style={styles.pairBadgeText}>{pairLabel(sourceLang, targetLang)}</Text>
+            </View>
+          )}
+        </View>
+
+        {alt.length > 0 && (
+          <View style={styles.altBlock}>
+            <Text style={styles.altLabel}>
+              {kind === 'idiomatic' || kind === 'mixed' ? t('translate.idiom_label') : t('translate.variants_label')}
+            </Text>
+            {alt.map((a, idx) => (
+              <Text key={`${a.text}-${idx}`} style={styles.altText}>• {a.text}</Text>
+            ))}
+            {!!note && (
+              <Text style={styles.noteText}>{note}</Text>
+            )}
+          </View>
+        )}
       </View>
 
       {/* Складність */}
       <View style={styles.section}>
-        <Text style={styles.sectionLabel}>DIFFICULTY</Text>
+        <Text style={styles.sectionLabel}>{t('word.difficulty')}</Text>
         <DifficultyBar score={word.difficulty_score || word.score || 50} />
       </View>
 
       {/* Приклад */}
       {(word.example_sentence || word.example) && (
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>EXAMPLE</Text>
+          <Text style={styles.sectionLabel}>{t('word.example')}</Text>
           <Text style={styles.example}>"{word.example_sentence || word.example}"</Text>
         </View>
       )}
@@ -63,7 +93,7 @@ export default function WordCard({ word, onAddToList, isAdded = false }) {
         activeOpacity={0.7}  // ефект натискання (0 = повністю прозорий, 1 = без ефекту)
       >
         <Text style={[styles.addButtonText, isAdded && styles.addButtonTextAdded]}>
-          {isAdded ? '✓ Added to list' : '+ Add to list'}
+          {isAdded ? t('lists.added_to_list_short') : `+ ${t('lists.add_to_list')}`}
         </Text>
       </TouchableOpacity>
     </View>
@@ -121,10 +151,57 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.md,
     borderLeftWidth: 3,
   },
+  translationTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
   translation: {
     fontSize: 18,
     color: COLORS.textPrimary,
     fontWeight: '500',
+    flex: 1,
+  },
+  pairBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(2,6,23,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
+    marginTop: 2,
+  },
+  pairBadgeText: {
+    fontSize: 10,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  altBlock: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148,163,184,0.25)',
+  },
+  altLabel: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    marginBottom: 6,
+  },
+  altText: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    lineHeight: 20,
+    marginBottom: 2,
+  },
+  noteText: {
+    marginTop: 6,
+    fontSize: 12,
+    color: COLORS.textMuted,
+    lineHeight: 18,
   },
   section: {
     marginBottom: 14,

@@ -13,10 +13,12 @@ import { StatusBar } from "expo-status-bar";
 import { NavigationContainer } from "@react-navigation/native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { View, ActivityIndicator } from "react-native";
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import TabNavigator from "./src/navigation/TabNavigator";
 import AuthScreen from "./src/screens/AuthScreen";
 import { AuthProvider, useAuth } from "./src/hooks/useAuth";
+import { I18nProvider } from "./src/i18n";
 import { COLORS } from "./src/utils/constants";
 
 function Root() {
@@ -35,13 +37,17 @@ function Root() {
 
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <AuthProvider>
-        <NavigationContainer>
-          <Root />
-        </NavigationContainer>
-        <StatusBar style="dark" />
-      </AuthProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <I18nProvider>
+          <NavigationContainer>
+            <Root />
+          </NavigationContainer>
+          <StatusBar style="dark" />
+                  </I18nProvider>
+        </AuthProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

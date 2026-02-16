@@ -1,143 +1,678 @@
 /**
  * ListsScreen.js — Екран списків слів
- * 
- * Показує всі списки користувача з прогресом вивчення.
- * При натисканні відкриває список зі словами.
+ *
+ * Реальні дані з бекенду (Supabase + RLS):
+ * - показує списки користувача
+ * - відкриває список і показує слова (join до words)
  */
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList, ScrollView,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  FlatList,
+  ScrollView,
+  ActivityIndicator,
+  Alert,
+  RefreshControl,
+  Modal,
+  Pressable,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
+import { Swipeable } from 'react-native-gesture-handler';
 import CefrBadge from '../components/CefrBadge';
 import DifficultyBar from '../components/DifficultyBar';
 import { COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
-
-// === Тимчасові дані (замінимо на Supabase) ===
-const MOCK_LISTS = [
-  { id: '1', name: 'Abstract Concepts', emoji: '💭', word_count: 3, progress: 45 },
-  { id: '2', name: 'Emotions & States', emoji: '🎭', word_count: 2, progress: 70 },
-  { id: '3', name: 'Business English', emoji: '💼', word_count: 2, progress: 30 },
-  { id: '4', name: 'Nature & Weather', emoji: '🌿', word_count: 1, progress: 90 },
-];
-
-const MOCK_WORDS = {
-  '1': [
-    { id: 'w1', original: 'serendipity', translation: 'щаслива випадковість', cefr: 'C1', score: 82 },
-    { id: 'w2', original: 'ephemeral', translation: 'ефемерний', cefr: 'C1', score: 78 },
-    { id: 'w6', original: 'ubiquitous', translation: 'всюдисущий', cefr: 'C2', score: 91 },
-  ],
-  '2': [
-    { id: 'w3', original: 'reluctant', translation: 'неохочий', cefr: 'B2', score: 58 },
-    { id: 'w7', original: 'procrastinate', translation: 'зволікати', cefr: 'B2', score: 62 },
-  ],
-  '3': [
-    { id: 'w4', original: 'accomplish', translation: 'досягати', cefr: 'B1', score: 42 },
-    { id: 'w8', original: 'benchmark', translation: 'орієнтир', cefr: 'B2', score: 55 },
-  ],
-  '4': [
-    { id: 'w5', original: 'breeze', translation: 'легкий вітерець', cefr: 'A2', score: 25 },
-  ],
-};
+import { useI18n } from '../i18n';
+import { pairLabel } from '../utils/languages';
+import {
+  fetchLists,
+  fetchListDetails,
+  createList,
+  deleteList,
+  removeWordFromList,
+  bulkDeleteWords,
+  moveWords,
+} from '../services/listsService';
 
 export default function ListsScreen() {
-  // Зберігаємо обраний список (null = показувати всі списки)
+  const { t } = useI18n();
+  const [lists, setLists] = useState([]);
   const [selectedList, setSelectedList] = useState(null);
+  const [selectedWords, setSelectedWords] = useState([]);
+  const [loadingLists, setLoadingLists] = useState(true);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Bulk mode
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selectedWordIds, setSelectedWordIds] = useState(() => new Set());
+  const [moveModalVisible, setMoveModalVisible] = useState(false);
+  const [moveTargetListId, setMoveTargetListId] = useState(null);
+
+  // New list modal
+  const [newListModalVisible, setNewListModalVisible] = useState(false);
+  const [newListName, setNewListName] = useState('');
+  const [creatingList, setCreatingList] = useState(false);
+
+  const totals = useMemo(() => {
+    const totalWords = (lists || []).reduce((sum, l) => sum + (l.word_count || 0), 0);
+    const totalLists = (lists || []).length;
+    return { totalWords, totalLists };
+  }, [lists]);
+
+    const formatWords = (n) => t('lists.words', { count: n });
+  const formatLists = (n) => t('lists.lists', { count: n });
+
+  const loadLists = async (opts = { silent: false }) => {
+    if (!opts.silent) setLoadingLists(true);
+    try {
+      const data = await fetchLists();
+      setLists(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.warn('Failed to fetch lists:', e?.message);
+      Alert.alert(t('common.error'), t('lists.load_lists_failed'));
+    } finally {
+      if (!opts.silent) setLoadingLists(false);
+    }
+  };
+
+  const openList = async (list) => {
+    setSelectedList(list);
+    setLoadingDetails(true);
+    setSelectedWords([]);
+    setBulkMode(false);
+    setSelectedWordIds(new Set());
+    try {
+      const details = await fetchListDetails(list.id);
+      const words = (details?.words || []).map((w) => ({
+        id: w.id,
+        original: w.original,
+        translation: w.translation,
+        alt_translations: w.alt_translations || null,
+        source_lang: w.source_lang || null,
+        target_lang: w.target_lang || null,
+        cefr: w.cefr_level,
+        score: w.difficulty_score ?? 50,
+      }));
+      setSelectedWords(words);
+    } catch (e) {
+      console.warn('Failed to fetch list details:', e?.message);
+      Alert.alert(t('common.error'), t('lists.load_list_failed'));
+    } finally {
+      setLoadingDetails(false);
+    }
+  };
+
+  const refreshSelectedList = async () => {
+    if (!selectedList) return;
+    setLoadingDetails(true);
+    try {
+      const details = await fetchListDetails(selectedList.id);
+      const words = (details?.words || []).map((w) => ({
+        id: w.id,
+        original: w.original,
+        translation: w.translation,
+        alt_translations: w.alt_translations || null,
+        source_lang: w.source_lang || null,
+        target_lang: w.target_lang || null,
+        cefr: w.cefr_level,
+        score: w.difficulty_score ?? 50,
+      }));
+      setSelectedWords(words);
+    } catch (e) {
+      console.warn('Failed to refresh list details:', e?.message);
+    } finally {
+      setLoadingDetails(false);
+    }
+  };
+
+  useEffect(() => {
+    loadLists();
+  }, []);
+
+  // Auto refresh when tab gets focus
+  useFocusEffect(
+    useCallback(() => {
+      if (!selectedList) {
+        loadLists({ silent: true });
+      } else {
+        refreshSelectedList();
+      }
+    }, [selectedList])
+  );
+
+  const onPullRefresh = async () => {
+    setRefreshing(true);
+    try {
+      if (!selectedList) {
+        await loadLists({ silent: true });
+      } else {
+        await refreshSelectedList();
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleCreateNewList = async () => {
+    const name = (newListName || '').trim();
+    if (!name) {
+      Alert.alert(t('common.error'), t('lists.name_required'));
+      return;
+    }
+
+    setCreatingList(true);
+    try {
+      const created = await createList({ name });
+
+      // Optimistic
+      setLists((prev) => [
+        { ...created, word_count: 0, list_words: undefined },
+        ...(prev || []),
+      ]);
+
+      setNewListModalVisible(false);
+      setNewListName('');
+
+      // Sync
+      await loadLists({ silent: true });
+    } catch (e) {
+      console.warn('Create list failed:', e?.message);
+      Alert.alert(t('common.error'), t('lists.create_failed'));
+    } finally {
+      setCreatingList(false);
+    }
+  };
+
+  const confirmDeleteList = (list) => {
+    Alert.alert(
+      'Видалити список?',
+      `Список «${list.name}» буде видалено.`,
+      [
+        { text: 'Скасувати', style: 'cancel' },
+        {
+          text: 'Видалити',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setLists((prev) => (prev || []).filter((l) => l.id !== list.id));
+              await deleteList(list.id);
+            } catch (e) {
+              Alert.alert(t('common.error'), t('lists.delete_failed'));
+              await loadLists({ silent: true });
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const toggleWordSelected = (wordId) => {
+    setSelectedWordIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(wordId)) next.delete(wordId);
+      else next.add(wordId);
+      return next;
+    });
+  };
+
+  const selectedCount = selectedWordIds.size;
+
+  const handleBulkDelete = () => {
+    if (selectedCount === 0 || !selectedList) return;
+    Alert.alert(
+      'Видалити слова?',
+      `Видалити ${selectedCount} слів зі списку «${selectedList.name}»?`,
+      [
+        { text: 'Скасувати', style: 'cancel' },
+        {
+          text: 'Видалити',
+          style: 'destructive',
+          onPress: async () => {
+            const ids = Array.from(selectedWordIds);
+            try {
+              setSelectedWords((prev) => (prev || []).filter((w) => !selectedWordIds.has(w.id)));
+              setSelectedWordIds(new Set());
+              await bulkDeleteWords(selectedList.id, ids);
+              await loadLists({ silent: true });
+            } catch (e) {
+              Alert.alert(t('common.error'), t('lists.bulk_delete_failed'));
+              await refreshSelectedList();
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleMoveConfirm = async () => {
+    if (!selectedList || selectedCount === 0 || !moveTargetListId) return;
+    const target = (lists || []).find((l) => l.id === moveTargetListId);
+    const targetName = target?.name || 'обраний список';
+
+    Alert.alert(
+      'Перенести слова?',
+      `Перенести ${selectedCount} слів у список «${targetName}»?`,
+      [
+        { text: 'Скасувати', style: 'cancel' },
+        {
+          text: 'Перенести',
+          onPress: async () => {
+            const ids = Array.from(selectedWordIds);
+            try {
+              setSelectedWords((prev) => (prev || []).filter((w) => !selectedWordIds.has(w.id)));
+              setSelectedWordIds(new Set());
+              setMoveModalVisible(false);
+              setMoveTargetListId(null);
+
+              await moveWords({
+                fromListId: selectedList.id,
+                toListId: moveTargetListId,
+                wordIds: ids,
+              });
+              await loadLists({ silent: true });
+            } catch (e) {
+              Alert.alert(t('common.error'), t('lists.move_failed'));
+              await refreshSelectedList();
+            }
+          },
+        },
+      ]
+    );
+  };
 
   // === Вигляд зі словами конкретного списку ===
   if (selectedList) {
-    const words = MOCK_WORDS[selectedList.id] || [];
-    
+    const words = selectedWords || [];
+
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.container}>
-          {/* Кнопка "Назад" */}
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => setSelectedList(null)}
-          >
-            <Text style={styles.backText}>← Back</Text>
-          </TouchableOpacity>
+          {/* Top row */}
+          <View style={styles.detailsTopRow}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => {
+                setSelectedList(null);
+                setSelectedWords([]);
+                setBulkMode(false);
+                setSelectedWordIds(new Set());
+              }}
+            >
+              <Text style={styles.backText}>← Back</Text>
+            </TouchableOpacity>
 
-          {/* Заголовок списку */}
+            <TouchableOpacity
+              style={styles.bulkToggle}
+              onPress={() => {
+                if (bulkMode) {
+                  setBulkMode(false);
+                  setSelectedWordIds(new Set());
+                } else {
+                  setBulkMode(true);
+                }
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.bulkToggleText}>{bulkMode ? 'Cancel' : 'Select'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Header */}
           <View style={styles.listHeader}>
-            <Text style={styles.listEmoji}>{selectedList.emoji}</Text>
+            <Ionicons name="folder-outline" size={24} color={COLORS.textMuted} />
             <View>
               <Text style={styles.listTitle}>{selectedList.name}</Text>
-              <Text style={styles.listSubtitle}>{words.length} words</Text>
+              <Text style={styles.listSubtitle}>
+                {loadingDetails ? 'Loading…' : formatWords(words.length)}
+              </Text>
             </View>
           </View>
 
-          {/* Слова в списку */}
-          <FlatList
-            data={words}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <View style={styles.wordItem}>
-                <View style={styles.wordLeft}>
-                  <View style={styles.wordHeader}>
-                    <Text style={styles.wordOriginal}>{item.original}</Text>
-                    <CefrBadge level={item.cefr} small />
-                  </View>
-                  <Text style={styles.wordTranslation}>{item.translation}</Text>
+          {loadingDetails ? (
+            <View style={{ paddingTop: 30, alignItems: 'center' }}>
+              <ActivityIndicator />
+            </View>
+          ) : (
+            <FlatList
+              data={words}
+              keyExtractor={(item) => item.id}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} />}
+              ListEmptyComponent={() => (
+                <View style={styles.emptyState}>
+                  <Ionicons name="add-circle-outline" size={28} color={COLORS.textMuted} />
+                  <Text style={styles.emptyTitle}>{t('lists.empty_words')}</Text>
+                  <Text style={styles.emptySubtitle}>
+                    {t('lists.empty_words_subtitle')}
+                  </Text>
                 </View>
-                <View style={styles.wordRight}>
-                  <DifficultyBar score={item.score} />
+              )}
+              renderItem={({ item }) => {
+                const checked = selectedWordIds.has(item.id);
+
+                const content = (
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      if (bulkMode) toggleWordSelected(item.id);
+                    }}
+                    style={styles.wordItem}
+                  >
+                    {bulkMode && (
+                      <View style={styles.checkboxWrap}>
+                        <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
+                          {checked && <Ionicons name="checkmark" size={14} color={COLORS.surface} />}
+                        </View>
+                      </View>
+                    )}
+
+                    <View style={styles.wordLeft}>
+                      <View style={styles.wordHeader}>
+                        <Text style={styles.wordOriginal}>{item.original}</Text>
+                        <CefrBadge level={item.cefr} small />
+                      </View>
+                      <Text style={styles.wordTranslation}>{item.translation}</Text>
+
+                      {(item.source_lang && item.target_lang) && (
+                        <Text style={styles.wordPair}>{pairLabel(item.source_lang, item.target_lang)}</Text>
+                      )}
+
+                      {Array.isArray(item.alt_translations) && item.alt_translations.length > 0 && (
+                        <View style={styles.wordAltWrap}>
+                          {item.alt_translations.slice(0, 3).map((a, idx) => (
+                            <Text key={`${a.text}-${idx}`} style={styles.wordAlt}>• {a.text}</Text>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.wordRight}>
+                      <DifficultyBar score={item.score} />
+                    </View>
+                  </TouchableOpacity>
+                );
+
+                if (bulkMode) return content;
+
+                return (
+                  <Swipeable
+                    renderRightActions={() => (
+                      <TouchableOpacity
+                        style={styles.swipeDelete}
+                        onPress={() => {
+                          Alert.alert(t('lists.delete_word_title'), t('lists.delete_word_prompt', { word: item.original }), [
+                            { text: 'Скасувати', style: 'cancel' },
+                            {
+                              text: 'Видалити',
+                              style: 'destructive',
+                              onPress: async () => {
+                                try {
+                                  setSelectedWords((prev) => (prev || []).filter((w) => w.id !== item.id));
+                                  await removeWordFromList(selectedList.id, item.id);
+                                  await loadLists({ silent: true });
+                                } catch (e) {
+                                  Alert.alert(t('common.error'), t('lists.delete_word_failed'));
+                                  await refreshSelectedList();
+                                }
+                              },
+                            },
+                          ]);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="trash-outline" size={18} color={COLORS.surface} />
+                        <Text style={styles.swipeDeleteText}>{t('common.delete')}</Text>
+                      </TouchableOpacity>
+                    )}
+                    rightThreshold={40}
+                  >
+                    {content}
+                  </Swipeable>
+                );
+              }}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 40 }}
+            />
+          )}
+
+          {/* Bulk toolbar */}
+          {bulkMode && (
+            <View style={styles.bulkBar}>
+              <TouchableOpacity
+                style={styles.bulkBarBtn}
+                onPress={() => {
+                  if (selectedWordIds.size === words.length) {
+                    setSelectedWordIds(new Set());
+                  } else {
+                    setSelectedWordIds(new Set(words.map((w) => w.id)));
+                  }
+                }}
+              >
+                <Text style={styles.bulkBarText}>
+                  {selectedWordIds.size === words.length ? 'Unselect all' : 'Select all'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.bulkBarBtn, selectedCount === 0 && styles.bulkBarBtnDisabled]}
+                onPress={() => {
+                  if (selectedCount === 0) return;
+                  setMoveModalVisible(true);
+                }}
+                disabled={selectedCount === 0}
+              >
+                <Text style={styles.bulkBarText}>{t('common.move')}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.bulkBarBtnDanger, selectedCount === 0 && styles.bulkBarBtnDisabled]}
+                onPress={handleBulkDelete}
+                disabled={selectedCount === 0}
+              >
+                <Text style={styles.bulkBarTextDanger}>{t('common.delete')}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Move modal */}
+          <Modal
+            visible={moveModalVisible}
+            transparent
+            animationType="slide"
+            onRequestClose={() => setMoveModalVisible(false)}
+          >
+            <Pressable style={styles.overlay} onPress={() => setMoveModalVisible(false)}>
+              <Pressable style={styles.modal} onPress={() => {}}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>{t('lists.move_to_list')}</Text>
+                  <TouchableOpacity onPress={() => setMoveModalVisible(false)}>
+                    <Text style={styles.modalClose}>✕</Text>
+                  </TouchableOpacity>
                 </View>
-              </View>
-            )}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: 40 }}
-          />
+
+                <Text style={styles.modalSubtitle}>{t('lists.select_target_list')}</Text>
+
+                <FlatList
+                  data={(lists || []).filter((l) => l.id !== selectedList.id)}
+                  keyExtractor={(item) => item.id}
+                  renderItem={({ item }) => {
+                    const active = item.id === moveTargetListId;
+                    return (
+                      <TouchableOpacity
+                        style={[styles.modalListItem, active && styles.modalListItemActive]}
+                        onPress={() => setMoveTargetListId(item.id)}
+                      >
+                        <Ionicons name="folder-outline" size={18} color={COLORS.textMuted} />
+                        <Text style={styles.modalListName}>{item.name}</Text>
+                        {active && <Ionicons name="checkmark" size={18} color={COLORS.primary} />}
+                      </TouchableOpacity>
+                    );
+                  }}
+                  style={{ maxHeight: 240 }}
+                />
+
+                <TouchableOpacity
+                  style={[styles.modalPrimaryBtn, !moveTargetListId && styles.bulkBarBtnDisabled]}
+                  onPress={handleMoveConfirm}
+                  disabled={!moveTargetListId}
+                >
+                  <Text style={styles.modalPrimaryText}>{t('common.continue')}</Text>
+                </TouchableOpacity>
+              </Pressable>
+            </Pressable>
+          </Modal>
         </View>
       </SafeAreaView>
     );
   }
 
   // === Вигляд з усіма списками ===
+  const hasLists = (lists || []).length > 0;
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-        {/* Заголовок */}
+      <ScrollView
+        style={styles.container}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} />}
+      >
+        {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.title}>My Lists</Text>
+          <Text style={styles.title}>{t('lists.title')}</Text>
           <Text style={styles.subtitle}>
-            {MOCK_LISTS.reduce((sum, l) => sum + l.word_count, 0)} words across {MOCK_LISTS.length} lists
+            {formatWords(totals.totalWords)} across {formatLists(totals.totalLists)}
           </Text>
         </View>
 
-        {/* Список списків */}
-        {MOCK_LISTS.map((list) => (
-          <TouchableOpacity
-            key={list.id}
-            style={styles.listCard}
-            onPress={() => setSelectedList(list)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.listCardHeader}>
-              <View style={styles.listCardInfo}>
-                <Text style={styles.listCardEmoji}>{list.emoji}</Text>
-                <View>
-                  <Text style={styles.listCardName}>{list.name}</Text>
-                  <Text style={styles.listCardCount}>{list.word_count} words</Text>
-                </View>
+        {loadingLists ? (
+          <View style={{ paddingTop: 10, alignItems: 'center' }}>
+            <ActivityIndicator />
+          </View>
+        ) : (
+          <>
+            {!hasLists ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="folder-open-outline" size={28} color={COLORS.textMuted} />
+                <Text style={styles.emptyTitle}>{t('lists.empty_cta')}</Text>
+                <Text style={styles.emptySubtitle}>Start collecting words you want to remember.</Text>
+                <TouchableOpacity
+                  style={styles.newListButton}
+                  activeOpacity={0.6}
+                  onPress={() => setNewListModalVisible(true)}
+                >
+                  <Text style={styles.newListText}>+ New list</Text>
+                </TouchableOpacity>
               </View>
-              <Text style={styles.listCardPercent}>{list.progress}%</Text>
-            </View>
-            {/* Шкала прогресу */}
-            <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: `${list.progress}%` }]} />
-            </View>
-          </TouchableOpacity>
-        ))}
+            ) : (
+              <>
+                {(lists || []).map((list) => {
+                  const progress = list.progress ?? 45;
 
-        {/* Кнопка "Новий список" */}
-        <TouchableOpacity style={styles.newListButton} activeOpacity={0.6}>
-          <Text style={styles.newListText}>+ New list</Text>
-        </TouchableOpacity>
+                  const card = (
+                    <TouchableOpacity
+                      style={styles.listCard}
+                      onPress={() => openList(list)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.listCardHeader}>
+                        <View style={styles.listCardInfo}>
+                          <Ionicons name="folder-outline" size={22} color={COLORS.textMuted} />
+                          <View>
+                            <Text style={styles.listCardName}>{list.name}</Text>
+                            <Text style={styles.listCardCount}>{formatWords(list.word_count || 0)}</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.listCardPercent}>{progress}%</Text>
+                      </View>
+
+                      <View style={styles.progressTrack}>
+                        <View style={[styles.progressFill, { width: `${progress}%` }]} />
+                      </View>
+                    </TouchableOpacity>
+                  );
+
+                  return (
+                    <Swipeable
+                      key={list.id}
+                      renderRightActions={() => (
+                        <TouchableOpacity
+                          style={styles.swipeDelete}
+                          onPress={() => confirmDeleteList(list)}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="trash-outline" size={18} color={COLORS.surface} />
+                          <Text style={styles.swipeDeleteText}>{t('common.delete')}</Text>
+                        </TouchableOpacity>
+                      )}
+                      rightThreshold={40}
+                    >
+                      {card}
+                    </Swipeable>
+                  );
+                })}
+
+                <TouchableOpacity
+                  style={styles.newListButton}
+                  activeOpacity={0.6}
+                  onPress={() => setNewListModalVisible(true)}
+                >
+                  <Text style={styles.newListText}>+ New list</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </>
+        )}
 
         <View style={{ height: 40 }} />
+
+        {/* New list modal */}
+        <Modal
+          visible={newListModalVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setNewListModalVisible(false)}
+        >
+          <Pressable style={styles.overlay} onPress={() => setNewListModalVisible(false)}>
+            <Pressable style={styles.modal} onPress={() => {}}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>{t('lists.new_list_btn')}</Text>
+                <TouchableOpacity onPress={() => setNewListModalVisible(false)}>
+                  <Text style={styles.modalClose}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.modalSubtitle}>{t('lists.name_label')}</Text>
+              <TextInput
+                value={newListName}
+                onChangeText={setNewListName}
+                placeholder="Наприклад: Work / Travel / Verbs"
+                placeholderTextColor={COLORS.textMuted}
+                style={{
+                  borderWidth: 1,
+                  borderColor: COLORS.borderLight,
+                  borderRadius: 12,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  color: COLORS.textPrimary,
+                  marginBottom: 10,
+                }}
+              />
+
+              <TouchableOpacity
+                style={[styles.modalPrimaryBtn, creatingList && { opacity: 0.7 }]}
+                onPress={handleCreateNewList}
+                disabled={creatingList}
+              >
+                <Text style={styles.modalPrimaryText}>{creatingList ? 'Creating…' : 'Create'}</Text>
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </Modal>
       </ScrollView>
     </SafeAreaView>
   );
@@ -146,13 +681,13 @@ export default function ListsScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   container: { flex: 1, paddingHorizontal: SPACING.xl },
-  
-  // Заголовок
+
+  // Header
   header: { paddingTop: SPACING.lg, paddingBottom: SPACING.xxl },
   title: { fontSize: 28, fontWeight: '400', color: COLORS.primary, letterSpacing: -0.5 },
   subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4 },
 
-  // Картка списку
+  // List card
   listCard: {
     backgroundColor: COLORS.surface,
     borderRadius: BORDER_RADIUS.lg,
@@ -160,46 +695,178 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderWidth: 1,
     borderColor: COLORS.borderLight,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.03, shadowRadius: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
     elevation: 1,
   },
-  listCardHeader: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10,
-  },
+  listCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   listCardInfo: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  listCardEmoji: { fontSize: 22 },
   listCardName: { fontSize: 15, fontWeight: '500', color: COLORS.primary },
   listCardCount: { fontSize: 12, color: COLORS.textMuted },
   listCardPercent: { fontSize: 12, color: COLORS.textMuted, fontFamily: 'Courier' },
-  
+
   progressTrack: { height: 3, backgroundColor: COLORS.borderLight, borderRadius: 2, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 2, backgroundColor: COLORS.accent },
 
-  // Кнопка нового списку
+  // New list button
   newListButton: {
-    padding: 14, borderWidth: 1, borderStyle: 'dashed', borderColor: COLORS.border,
-    borderRadius: BORDER_RADIUS.lg, alignItems: 'center', marginTop: 4,
+    padding: 14,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: COLORS.border,
+    borderRadius: BORDER_RADIUS.lg,
+    alignItems: 'center',
+    marginTop: 4,
   },
   newListText: { fontSize: 14, color: COLORS.textMuted },
 
-  // Деталі списку
+  // Details
+  detailsTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   backButton: { paddingVertical: SPACING.lg },
   backText: { fontSize: 13, color: COLORS.textMuted },
+  bulkToggle: { paddingVertical: SPACING.lg, paddingHorizontal: 6 },
+  bulkToggleText: { fontSize: 13, color: COLORS.textMuted },
   listHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: SPACING.xl },
-  listEmoji: { fontSize: 28 },
   listTitle: { fontSize: 24, fontWeight: '400', color: COLORS.primary },
   listSubtitle: { fontSize: 12, color: COLORS.textMuted },
 
-  // Слово в списку
+  // Word item
   wordItem: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    backgroundColor: COLORS.surface, borderRadius: 14, padding: 14, marginBottom: 8,
-    borderWidth: 1, borderColor: COLORS.borderLight,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.03, shadowRadius: 2,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
   },
+  checkboxWrap: { marginRight: 10 },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.surface,
+  },
+  checkboxChecked: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   wordLeft: { flex: 1 },
   wordHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
   wordOriginal: { fontSize: 16, fontWeight: '500', color: COLORS.primary },
   wordTranslation: { fontSize: 13, color: COLORS.textMuted },
+  wordPair: {
+    marginTop: 2,
+    fontSize: 10,
+    color: COLORS.textHint,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  wordAltWrap: { marginTop: 6 },
+  wordAlt: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    lineHeight: 18,
+  },
   wordRight: { width: 100 },
+
+  swipeDelete: {
+    width: 92,
+    marginLeft: 8,
+    marginBottom: 8,
+    borderRadius: 14,
+    backgroundColor: '#ef4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  swipeDeleteText: { fontSize: 11, color: COLORS.surface, fontWeight: '600' },
+
+  bulkBar: {
+    position: 'absolute',
+    left: SPACING.xl,
+    right: SPACING.xl,
+    bottom: 18,
+    flexDirection: 'row',
+    gap: 10,
+    padding: 10,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  bulkBarBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+  },
+  bulkBarBtnDanger: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#ef4444',
+    alignItems: 'center',
+  },
+  bulkBarBtnDisabled: { opacity: 0.45 },
+  bulkBarText: { fontSize: 12, color: COLORS.textSecondary, fontWeight: '600' },
+  bulkBarTextDanger: { fontSize: 12, color: COLORS.surface, fontWeight: '700' },
+
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'flex-end' },
+  modal: {
+    backgroundColor: COLORS.surface,
+    borderTopLeftRadius: BORDER_RADIUS.xl,
+    borderTopRightRadius: BORDER_RADIUS.xl,
+    padding: SPACING.xl,
+    maxHeight: '70%',
+  },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  modalTitle: { fontSize: 16, fontWeight: '600', color: COLORS.primary },
+  modalClose: { fontSize: 18, color: COLORS.textMuted, padding: 4 },
+  modalSubtitle: { fontSize: 12, color: COLORS.textMuted, marginBottom: 10 },
+  modalListItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    gap: 10,
+  },
+  modalListItemActive: { backgroundColor: '#f6f7f8' },
+  modalListName: { flex: 1, fontSize: 14, color: COLORS.textPrimary },
+  modalPrimaryBtn: {
+    marginTop: 10,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+  },
+  modalPrimaryText: { fontSize: 13, color: COLORS.surface, fontWeight: '700' },
+
+  // Empty states
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 18,
+    gap: 10,
+  },
+  emptyTitle: { fontSize: 16, fontWeight: '600', color: COLORS.textPrimary, marginTop: 2 },
+  emptySubtitle: { fontSize: 13, color: COLORS.textMuted, textAlign: 'center', lineHeight: 18 },
 });

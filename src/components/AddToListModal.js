@@ -23,6 +23,7 @@ import {
   StyleSheet, FlatList, TextInput, Pressable,
 } from 'react-native';
 import { COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
+import { useI18n } from '../i18n';
 
 export default function AddToListModal({
   visible,
@@ -32,6 +33,7 @@ export default function AddToListModal({
   onClose,
   onCreateNew,
 }) {
+  const { t } = useI18n();
   return (
     <Modal
       visible={visible}
@@ -45,7 +47,7 @@ export default function AddToListModal({
         <Pressable style={styles.modal} onPress={() => {}}>
           {/* Заголовок + кнопка закриття */}
           <View style={styles.header}>
-            <Text style={styles.title}>Add to list</Text>
+            <Text style={styles.title}>{t('lists.add_to_list_title')}</Text>
             <TouchableOpacity onPress={onClose}>
               <Text style={styles.closeButton}>✕</Text>
             </TouchableOpacity>
@@ -56,7 +58,7 @@ export default function AddToListModal({
             <View style={styles.suggestion}>
               <Text style={styles.suggestionIcon}>🤖</Text>
               <Text style={styles.suggestionText}>
-                AI suggests: <Text style={styles.suggestionName}>{suggestedList}</Text>
+                {t('lists.ai_suggests')} <Text style={styles.suggestionName}>{suggestedList}</Text>
               </Text>
             </View>
           )}
@@ -77,7 +79,7 @@ export default function AddToListModal({
               >
                 <Text style={styles.listEmoji}>{item.emoji || '📚'}</Text>
                 <Text style={styles.listName}>{item.name}</Text>
-                <Text style={styles.listCount}>{item.word_count || 0} words</Text>
+                <Text style={styles.listCount}>{t('lists.words', { count: item.word_count || 0 })}</Text>
               </TouchableOpacity>
             )}
             style={styles.flatList}
@@ -85,7 +87,7 @@ export default function AddToListModal({
 
           {/* Кнопка "Створити новий список" */}
           <TouchableOpacity style={styles.createNew} onPress={onCreateNew} activeOpacity={0.6}>
-            <Text style={styles.createNewText}>+ Create new list</Text>
+            <Text style={styles.createNewText}>+ {t('lists.create_new')}</Text>
           </TouchableOpacity>
         </Pressable>
       </Pressable>

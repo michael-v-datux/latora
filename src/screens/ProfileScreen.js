@@ -9,6 +9,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Image } from "rea
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../hooks/useAuth";
+import { useI18n } from "../i18n";
 import { COLORS, CEFR_COLORS, SPACING, BORDER_RADIUS } from "../utils/constants";
 
 // Тимчасові дані
@@ -16,13 +17,14 @@ const STREAK = 12;
 const LEVELS = { A1: 0, A2: 1, B1: 1, B2: 3, C1: 2, C2: 1 };
 
 const SETTINGS = [
-  { label: "Notifications", icon: "notifications-outline" },
-  { label: "Export data", icon: "download-outline" },
-  { label: "Language pair", icon: "language-outline" },
-  { label: "About LexiLevel", icon: "information-circle-outline" },
+  { key: "profile.settings.notifications", icon: "notifications-outline" },
+  { key: "profile.settings.export", icon: "download-outline" },
+  { key: "profile.settings.language_pair", icon: "language-outline" },
+  { key: "profile.settings.about", icon: "information-circle-outline" },
 ];
 
 export default function ProfileScreen() {
+  const { t, locale, setLocale, availableLocales, localeLabel } = useI18n();
   const { user, signOut } = useAuth();
 
   const profile = useMemo(() => {
@@ -57,13 +59,13 @@ export default function ProfileScreen() {
 
   const providerLabel = profile.provider
     ? profile.provider.charAt(0).toUpperCase() + profile.provider.slice(1)
-    : "Email";
+    : t("profile.provider_email");
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <Text style={styles.title}>Profile</Text>
+          <Text style={styles.title}>{t('profile.title')}</Text>
         </View>
 
         {/* Профіль (email/provider) */}
@@ -79,7 +81,7 @@ export default function ProfileScreen() {
 
             <View style={styles.profileText}>
               <Text style={styles.profileName} numberOfLines={1}>
-                {profile.fullName || "Signed in"}
+                {profile.fullName || t("profile.signed_in")}
               </Text>
 
               <Text style={styles.profileEmail} numberOfLines={1}>
@@ -106,12 +108,12 @@ export default function ProfileScreen() {
         {/* Стрік */}
         <View style={styles.streakCard}>
           <Text style={styles.streakNumber}>{STREAK}</Text>
-          <Text style={styles.streakLabel}>day streak 🔥</Text>
+          <Text style={styles.streakLabel}>{t('profile.streak', { count: STREAK })} 🔥</Text>
         </View>
 
         {/* Розподіл за рівнями */}
         <View style={styles.levelsCard}>
-          <Text style={styles.sectionLabel}>WORDS BY LEVEL</Text>
+          <Text style={styles.sectionLabel}>{t('profile.words_by_level')}</Text>
           <View style={styles.levelsChart}>
             {Object.entries(LEVELS).map(([level, count]) => (
               <View key={level} style={styles.levelColumn}>
@@ -140,21 +142,41 @@ export default function ProfileScreen() {
         {/* Налаштування */}
         {SETTINGS.map((item, index) => (
           <TouchableOpacity
-            key={item.label}
+            key={t(item.key)}
             style={[styles.settingItem, index < SETTINGS.length - 1 && styles.settingBorder]}
             activeOpacity={0.6}
           >
             <View style={styles.settingLeft}>
               <Ionicons name={item.icon} size={20} color={COLORS.textSecondary} />
-              <Text style={styles.settingLabel}>{item.label}</Text>
+              <Text style={styles.settingLabel}>{t(item.key)}</Text>
             </View>
             <Ionicons name="chevron-forward" size={16} color={COLORS.textHint} />
           </TouchableOpacity>
         ))}
 
+
+        {/* Language */}
+        <View style={styles.languageCard}>
+          <Text style={styles.sectionLabel}>{t('profile.language')}</Text>
+          <View style={styles.langRow}>
+            {availableLocales.map((code) => (
+              <TouchableOpacity
+                key={code}
+                style={[styles.langBtn, code === locale && styles.langBtnActive]}
+                onPress={() => setLocale(code)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.langText, code === locale && styles.langTextActive]}>
+                  {localeLabel(code)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
         {/* Кнопка виходу */}
         <TouchableOpacity style={styles.signOutButton} onPress={signOut} activeOpacity={0.6}>
-          <Text style={styles.signOutText}>Sign out</Text>
+          <Text style={styles.signOutText}>{t("profile.sign_out")}</Text>
         </TouchableOpacity>
 
         <View style={{ height: 40 }} />
