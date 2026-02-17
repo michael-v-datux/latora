@@ -9,6 +9,91 @@ const router = express.Router();
 
 const requireAuth = require("../middleware/requireAuth");
 
+// GET /api/practice/stats — загальна статистика для головного екрану
+// ВАЖЛИВО: цей маршрут ПЕРЕД /:listId, щоб "stats" не матчився як listId
+router.get("/practice/stats", requireAuth, async (req, res, next) => {
+  try {
+    const supabase = req.supabase;
+    const userId = req.user.id;
+
+    // Отримуємо всі списки користувача
+    const { data: lists, error: listsErr } = await supabase
+      .from("lists")
+      .select("id")
+      .eq("user_id", userId);
+
+    if (listsErr) throw listsErr;
+
+    const listIds = (lists || []).map((l) => l.id);
+    if (listIds.length === 0) {
+      return res.json({ due: 0, mastered: 0, total: 0 });
+    }
+
+    // Отримуємо всі унікальні word_id з усіх списків
+    const { data: listWords, error: lwErr } = await supabase
+      .from("list_words")
+      .select("word_id")
+      .in("list_id", listIds);
+
+    if (lwErr) throw lwErr;
+
+    const wordIds = [...new Set((listWords || []).map((lw) => lw.word_id))];
+    if (wordIds.length === 0) {
+      return res.json({ due: 0, mastered: 0, total: 0 });
+    }
+
+    // Отримуємо прогрес для всіх слів
+    const { data: progress, error: progErr } = await supabase
+      .from("user_word_progress")
+      .select("word_id, next_review, repetitions, ease_factor")
+      .in("word_id", wordIds);
+
+    if (progErr) throw progErr;
+
+    const now = new Date();
+    const progressMap = new Map((progress || []).map((p) => [p.word_id, p]));
+
+    let due = 0;
+    let mastered = 0;
+
+    for (const wid of wordIds) {
+      const p = progressMap.get(wid);
+      if (!p || new Date(p.next_review) <= now) {
+        due++;
+      }
+      if (p && p.repetitions >= 5 && p.ease_factor >= 2.3) {
+        mastered++;
+      }
+    }
+
+    return res.json({ due, mastered, total: wordIds.length });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// GET /api/practice/:listId/all — усі слова зі списку (для генерації варіантів quiz)
+// ВАЖЛИВО: цей маршрут ПЕРЕД загальним /:listId
+router.get("/practice/:listId/all", requireAuth, async (req, res, next) => {
+  try {
+    const supabase = req.supabase;
+    const { listId } = req.params;
+
+    const { data, error } = await supabase
+      .from("list_words")
+      .select("word_id, words(*)")
+      .eq("list_id", listId);
+
+    if (error) throw error;
+
+    const words = (data || []).map((d) => d.words);
+
+    return res.json({ words });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 // GET /api/practice/:listId — слова для повторення зі списку
 router.get("/practice/:listId", requireAuth, async (req, res, next) => {
   try {
