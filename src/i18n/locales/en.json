@@ -153,6 +153,10 @@
     "continue": "Continue ›",
     "restart": "Start over",
     "streak_message": "Review #{{count}} today! Keep it up 🔥",
+    "empty_list": "This list is empty",
+    "empty_list_title": "List is empty",
+    "empty_list_message": "Add words to this list before starting practice.",
+    "add_word_btn": "Add word",
     "difficulty": {
       "hint": "Hint",
       "hint_desc": "Translation with hidden letters",

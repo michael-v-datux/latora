@@ -37,7 +37,7 @@ import {
   bulkDeleteWords,
   moveWords,
 } from '../services/listsService';
-import { fetchSessionCounts } from '../services/practiceService';
+import { fetchSessionCounts, fetchListStatuses } from '../services/practiceService';
 import { useI18n } from '../i18n';
 
 // --- Helpers: normalize idiom fields coming from Supabase/HTTP ---
@@ -97,6 +97,7 @@ export default function ListsScreen({ navigation }) {
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lifetimeSessions, setLifetimeSessions] = useState(null);
+  const [listProgressMap, setListProgressMap] = useState({}); // { [listId]: { total, due } }
 
   // Bulk mode
   const [bulkMode, setBulkMode] = useState(false);
@@ -122,8 +123,12 @@ export default function ListsScreen({ navigation }) {
   const loadLists = async (opts = { silent: false }) => {
     if (!opts.silent) setLoadingLists(true);
     try {
-      const data = await fetchLists();
+      const [data, statusesData] = await Promise.all([
+        fetchLists(),
+        fetchListStatuses().catch(() => ({ statuses: {} })),
+      ]);
       setLists(Array.isArray(data) ? data : []);
+      setListProgressMap(statusesData?.statuses || {});
     } catch (e) {
       console.warn('Failed to fetch lists:', e?.message);
       Alert.alert('Помилка', 'Не вдалося завантажити списки');
@@ -400,8 +405,8 @@ export default function ListsScreen({ navigation }) {
             </View>
           </View>
 
-          {/* Practice info */}
-          {!loadingDetails && (
+          {/* Practice info — тільки якщо у списку є слова */}
+          {!loadingDetails && words.length > 0 && (
             <View style={styles.practiceInfoRow}>
               <Text style={styles.practiceInfoText}>
                 {lifetimeSessions !== null && lifetimeSessions > 0
@@ -435,13 +440,17 @@ export default function ListsScreen({ navigation }) {
               keyExtractor={(item) => item.id}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} />}
               ListEmptyComponent={() => (
-                <View style={styles.emptyState}>
-                  <Ionicons name="add-circle-outline" size={28} color={COLORS.textMuted} />
-                  <Text style={styles.emptyTitle}>No words yet</Text>
+                <TouchableOpacity
+                  style={styles.emptyState}
+                  onPress={() => navigation.navigate('Translate')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="add-circle-outline" size={28} color={COLORS.primary} />
+                  <Text style={styles.emptyTitle}>{t('lists.empty_words')}</Text>
                   <Text style={styles.emptySubtitle}>
-                    Add words from Translate to start building your vocabulary.
+                    {t('lists.empty_words_subtitle')}
                   </Text>
-                </View>
+                </TouchableOpacity>
               )}
               renderItem={({ item }) => {
                 const checked = selectedWordIds.has(item.id);
@@ -716,7 +725,10 @@ export default function ListsScreen({ navigation }) {
             ) : (
               <>
                 {(lists || []).map((list) => {
-                  const progress = list.progress ?? 45;
+                  const st = listProgressMap[list.id];
+                  const progress = st && st.total > 0
+                    ? Math.round(((st.total - st.due) / st.total) * 100)
+                    : 0;
 
                   const card = (
                     <TouchableOpacity
