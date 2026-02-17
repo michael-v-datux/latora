@@ -22,6 +22,7 @@ import {
   fetchPracticeStats,
   fetchPracticeWords,
   fetchAllListWords,
+  fetchListStatuses,
   submitPracticeResult,
 } from '../services/practiceService';
 import { COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
@@ -80,10 +81,19 @@ function shuffle(arr) {
 }
 
 /** Згенерувати 3 варіанти (1 правильний + 2 фейкових) */
-function generateOptions(correctWord, allWords) {
+function generateOptions(correctWord, allWords, distractors = []) {
+  // Спочатку пробуємо взяти з того ж списку
   const others = allWords.filter(w => w.id !== correctWord.id && w.translation);
   const fakes = shuffle(others).slice(0, 2).map(w => w.translation);
-  // Якщо мало слів у списку — додаємо плейсхолдери
+  // Якщо мало слів у списку — беремо з дистракторів (інші слова тієї ж мовної пари)
+  if (fakes.length < 2 && distractors.length > 0) {
+    const extraFakes = shuffle(distractors)
+      .filter(d => d.translation !== correctWord.translation && !fakes.includes(d.translation))
+      .slice(0, 2 - fakes.length)
+      .map(d => d.translation);
+    fakes.push(...extraFakes);
+  }
+  // Крайній fallback — не повинен спрацьовувати якщо в БД є слова
   while (fakes.length < 2) {
     fakes.push(fakes.length === 0 ? '...' : '???');
   }
@@ -110,9 +120,15 @@ export default function PracticeScreen() {
   // ─── Дані ───
   const [lists, setLists] = useState([]);
   const [practiceStats, setPracticeStats] = useState({ due: 0, mastered: 0, total: 0 });
+  const [listStatuses, setListStatuses] = useState({}); // { [listId]: { total, due, reviewed_today } }
   const [words, setWords] = useState([]);        // due words для сесії
   const [allListWords, setAllListWords] = useState([]); // усі слова списку (для quiz)
+  const [distractors, setDistractors] = useState([]); // додаткові слова для quiz (малі списки)
   const [loading, setLoading] = useState(false);
+  const [forceRestart, setForceRestart] = useState(false); // для "Start over"
+
+  // ─── Info tooltip ───
+  const [activeTooltip, setActiveTooltip] = useState(null); // 'due' | 'mastered' | 'total' | null
 
   // ─── Сесія ───
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -134,12 +150,14 @@ export default function PracticeScreen() {
   // ─── Завантаження даних для Home ───
   const loadHomeData = useCallback(async () => {
     try {
-      const [listsData, statsData] = await Promise.all([
+      const [listsData, statsData, statusesData] = await Promise.all([
         fetchLists(),
         fetchPracticeStats(),
+        fetchListStatuses(),
       ]);
       setLists(listsData || []);
       setPracticeStats(statsData || { due: 0, mastered: 0, total: 0 });
+      setListStatuses(statusesData?.statuses || {});
     } catch (e) {
       console.warn('Failed to load practice home data:', e);
     }
@@ -150,8 +168,9 @@ export default function PracticeScreen() {
   }, [loadHomeData]);
 
   // ─── Обробка натискання на список ───
-  const handleListPress = (list) => {
+  const handleListPress = (list, force = false) => {
     setSelectedList(list);
+    setForceRestart(force);
     setScreen('difficulty');
   };
 
@@ -161,7 +180,7 @@ export default function PracticeScreen() {
     setLoading(true);
     try {
       const [practiceData, allData] = await Promise.all([
-        fetchPracticeWords(selectedList.id),
+        fetchPracticeWords(selectedList.id, forceRestart),
         level === 2 ? fetchAllListWords(selectedList.id) : Promise.resolve({ words: [] }),
       ]);
 
@@ -183,8 +202,11 @@ export default function PracticeScreen() {
         }))
       );
 
+      const quizDistractors = allData.distractors || [];
+
       setWords(sorted);
       setAllListWords(allData.words || sorted);
+      setDistractors(quizDistractors);
       setCurrentIndex(0);
       setRevealed(false);
       setStats({ easy: 0, good: 0, hard: 0, forgot: 0 });
@@ -193,7 +215,7 @@ export default function PracticeScreen() {
       setTimeLeft(TIMER_SECONDS);
 
       // Підготувати дані для першого слова
-      prepareWord(sorted[0], level, allData.words || sorted);
+      prepareWord(sorted[0], level, allData.words || sorted, quizDistractors);
 
       setLoading(false);
       setScreen('session');
@@ -204,12 +226,12 @@ export default function PracticeScreen() {
   };
 
   // ─── Підготувати дані для поточного слова ───
-  const prepareWord = (word, level, pool) => {
+  const prepareWord = (word, level, pool, extraDistractors) => {
     if (level === 1) {
       setMaskedText(maskTranslation(word.translation));
     }
     if (level === 2) {
-      setQuizOptions(generateOptions(word, pool));
+      setQuizOptions(generateOptions(word, pool, extraDistractors || distractors));
       setQuizAnswered(null);
     }
     if (level === 4) {
@@ -269,7 +291,7 @@ export default function PracticeScreen() {
     } else {
       const nextIndex = currentIndex + 1;
       setCurrentIndex(nextIndex);
-      prepareWord(words[nextIndex], difficulty, allListWords);
+      prepareWord(words[nextIndex], difficulty, allListWords, distractors);
     }
   };
 
@@ -298,19 +320,26 @@ export default function PracticeScreen() {
     setRevealed(true);
   };
 
+  const handleTimerAdd3 = () => {
+    setTimeLeft(prev => prev + 3);
+  };
+
   // ─── Reset ───
   const reset = () => {
     setScreen('home');
     setSelectedList(null);
     setDifficulty(null);
+    setForceRestart(false);
     setWords([]);
     setAllListWords([]);
+    setDistractors([]);
     setCurrentIndex(0);
     setRevealed(false);
     setStats({ easy: 0, good: 0, hard: 0, forgot: 0 });
     setQuizAnswered(null);
     setTimerExpired(false);
     setTimeLeft(TIMER_SECONDS);
+    setActiveTooltip(null);
     if (timerRef.current) clearInterval(timerRef.current);
     loadHomeData();
   };
@@ -361,14 +390,27 @@ export default function PracticeScreen() {
           <View style={styles.statsCard}>
             <View style={styles.statsRow}>
               {[
-                { n: practiceStats.due, label: t('practice.due_today'), color: '#ea580c' },
-                { n: practiceStats.mastered, label: t('practice.mastered'), color: '#16a34a' },
-                { n: practiceStats.total, label: t('practice.total'), color: '#2563eb' },
+                { key: 'due', n: practiceStats.due, label: t('practice.due_today'), color: '#ea580c', tooltip: t('practice.tooltip_due') },
+                { key: 'mastered', n: practiceStats.mastered, label: t('practice.mastered'), color: '#16a34a', tooltip: t('practice.tooltip_mastered') },
+                { key: 'total', n: practiceStats.total, label: t('practice.total'), color: '#2563eb', tooltip: t('practice.tooltip_total') },
               ].map(stat => (
-                <View key={stat.label} style={styles.statItem}>
+                <TouchableOpacity
+                  key={stat.key}
+                  style={styles.statItem}
+                  onPress={() => setActiveTooltip(activeTooltip === stat.key ? null : stat.key)}
+                  activeOpacity={0.7}
+                >
                   <Text style={[styles.statNumber, { color: stat.color }]}>{stat.n}</Text>
-                  <Text style={styles.statLabel}>{stat.label}</Text>
-                </View>
+                  <View style={styles.statLabelRow}>
+                    <Text style={styles.statLabel}>{stat.label}</Text>
+                    <Text style={styles.statInfoIcon}>ⓘ</Text>
+                  </View>
+                  {activeTooltip === stat.key && (
+                    <View style={styles.tooltip}>
+                      <Text style={styles.tooltipText}>{stat.tooltip}</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
               ))}
             </View>
           </View>
@@ -381,18 +423,73 @@ export default function PracticeScreen() {
               <Text style={styles.emptyListSubtext}>{t('practice.no_words_subtitle')}</Text>
             </View>
           )}
-          {lists.map(list => (
-            <TouchableOpacity
-              key={list.id}
-              style={styles.listItem}
-              onPress={() => handleListPress(list)}
-              activeOpacity={0.6}
-            >
-              <Text style={styles.listEmoji}>{list.emoji || '📚'}</Text>
-              <Text style={styles.listName}>{list.name}</Text>
-              <Text style={styles.listCount}>{list.word_count || 0}</Text>
-            </TouchableOpacity>
-          ))}
+          {lists.map(list => {
+            const st = listStatuses[list.id];
+            const total = st?.total || 0;
+            const due = st?.due ?? total;
+            const reviewed = st?.reviewed_today || 0;
+
+            // Status: done | partial | due | empty
+            let status = 'due';
+            if (total === 0) status = 'empty';
+            else if (due === 0) status = 'done';
+            else if (reviewed > 0) status = 'partial';
+
+            return (
+              <View key={list.id} style={[
+                styles.listItem,
+                status === 'done' && styles.listItemDone,
+              ]}>
+                <TouchableOpacity
+                  style={styles.listItemRow}
+                  onPress={() => handleListPress(list)}
+                  activeOpacity={0.6}
+                >
+                  <Text style={styles.listEmoji}>{list.emoji || '📚'}</Text>
+                  <Text style={styles.listName}>{list.name}</Text>
+                  <Text style={styles.listCount}>{list.word_count || 0}</Text>
+                </TouchableOpacity>
+
+                {/* Status badge */}
+                {status === 'done' && (
+                  <View style={[styles.statusRow, { borderTopColor: '#bbf7d0' }]}>
+                    <Text style={styles.statusDone}>✅ {t('practice.status_done')}</Text>
+                  </View>
+                )}
+                {status === 'partial' && (
+                  <View style={styles.statusRow}>
+                    <Text style={styles.statusPartial}>
+                      🔄 {t('practice.status_partial', { done: total - due, total })}
+                    </Text>
+                    <View style={styles.statusActions}>
+                      <TouchableOpacity
+                        onPress={() => handleListPress(list)}
+                        activeOpacity={0.6}
+                        hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
+                      >
+                        <Text style={styles.statusContinue}>{t('practice.continue')}</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.statusDivider}>·</Text>
+                      <TouchableOpacity
+                        onPress={() => handleListPress(list, true)}
+                        activeOpacity={0.6}
+                        hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
+                      >
+                        <Text style={styles.statusRestart}>{t('practice.restart')}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+                {status === 'due' && (
+                  <View style={styles.statusRow}>
+                    <Text style={styles.statusDue}>
+                      {t('practice.status_due', { count: due })}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            );
+          })}
           <View style={{ height: 40 }} />
         </ScrollView>
       </SafeAreaView>
@@ -611,7 +708,7 @@ export default function PracticeScreen() {
                     <View style={[
                       styles.timerFill,
                       {
-                        width: `${(timeLeft / TIMER_SECONDS) * 100}%`,
+                        width: `${Math.min((timeLeft / TIMER_SECONDS) * 100, 100)}%`,
                         backgroundColor: timeLeft > 2 ? '#2563eb' : timeLeft > 1 ? '#ea580c' : '#dc2626',
                       },
                     ]} />
@@ -620,25 +717,31 @@ export default function PracticeScreen() {
                 </View>
               )}
 
-              {/* Timer expired message */}
-              {timerExpired && !revealed && null}
-
-              {/* Кнопки know/don't know (до reveal) */}
+              {/* Кнопки know/don't know + add time (до reveal) */}
               {!revealed && !timerExpired && (
-                <View style={styles.timerButtons}>
+                <View style={styles.timerButtonsColumn}>
+                  <View style={styles.timerButtons}>
+                    <TouchableOpacity
+                      style={[styles.timerActionButton, styles.timerDontKnow]}
+                      onPress={handleTimerDontKnow}
+                      activeOpacity={0.6}
+                    >
+                      <Text style={styles.timerDontKnowText}>{t('practice.dont_know')}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.timerActionButton, styles.timerKnow]}
+                      onPress={handleTimerKnow}
+                      activeOpacity={0.6}
+                    >
+                      <Text style={styles.timerKnowText}>{t('practice.i_know')}</Text>
+                    </TouchableOpacity>
+                  </View>
                   <TouchableOpacity
-                    style={[styles.timerActionButton, styles.timerDontKnow]}
-                    onPress={handleTimerDontKnow}
+                    style={styles.addTimeButton}
+                    onPress={handleTimerAdd3}
                     activeOpacity={0.6}
                   >
-                    <Text style={styles.timerDontKnowText}>{t('practice.dont_know')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.timerActionButton, styles.timerKnow]}
-                    onPress={handleTimerKnow}
-                    activeOpacity={0.6}
-                  >
-                    <Text style={styles.timerKnowText}>{t('practice.i_know')}</Text>
+                    <Text style={styles.addTimeText}>{t('practice.add_time')}</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -758,20 +861,48 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.03, shadowRadius: 3,
   },
   statsRow: { flexDirection: 'row', justifyContent: 'space-around' },
-  statItem: { alignItems: 'center' },
+  statItem: { alignItems: 'center', position: 'relative' },
   statNumber: { fontSize: 28, fontWeight: '300', fontFamily: 'Courier' },
-  statLabel: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
+  statLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
+  statLabel: { fontSize: 11, color: COLORS.textMuted },
+  statInfoIcon: { fontSize: 11, color: COLORS.textHint },
+  tooltip: {
+    position: 'absolute', top: '100%', marginTop: 6,
+    backgroundColor: COLORS.primary, borderRadius: BORDER_RADIUS.sm, padding: 10,
+    width: 180, zIndex: 10,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6,
+  },
+  tooltipText: { fontSize: 11, color: '#ffffff', lineHeight: 16, textAlign: 'center' },
 
   // Списки
   sectionLabel: { fontSize: 12, color: COLORS.textMuted, letterSpacing: 0.5, marginBottom: 10, marginTop: 4 },
   listItem: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
     backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.md,
-    padding: 11, marginBottom: 6, borderWidth: 1, borderColor: COLORS.borderLight,
+    paddingHorizontal: 11, paddingTop: 11, paddingBottom: 11,
+    marginBottom: 6, borderWidth: 1, borderColor: COLORS.borderLight,
+  },
+  listItemDone: {
+    backgroundColor: '#f0fdf4', borderColor: '#bbf7d0',
+  },
+  listItemRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
   },
   listEmoji: { fontSize: 16 },
   listName: { flex: 1, fontSize: 14, color: COLORS.textPrimary },
   listCount: { fontSize: 12, color: COLORS.textMuted },
+
+  // Status badges
+  statusRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginTop: 7, paddingTop: 7, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.borderLight,
+  },
+  statusDone: { fontSize: 12, color: '#16a34a', fontWeight: '500' },
+  statusPartial: { fontSize: 12, color: '#ea580c' },
+  statusDue: { fontSize: 12, color: COLORS.textMuted },
+  statusActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  statusContinue: { fontSize: 12, color: '#2563eb', fontWeight: '600' },
+  statusDivider: { fontSize: 12, color: COLORS.textHint },
+  statusRestart: { fontSize: 12, color: COLORS.textMuted },
 
   // Difficulty select
   difficultyHeader: { paddingTop: SPACING.lg, paddingBottom: SPACING.xl },
@@ -842,12 +973,18 @@ const styles = StyleSheet.create({
   timerTrack: { flex: 1, height: 6, backgroundColor: COLORS.borderLight, borderRadius: 3, overflow: 'hidden' },
   timerFill: { height: '100%', borderRadius: 3 },
   timerText: { fontSize: 14, fontFamily: 'Courier', color: COLORS.textMuted, width: 28, textAlign: 'right' },
-  timerButtons: { flexDirection: 'row', gap: 10, marginTop: 24, width: '100%' },
+  timerButtonsColumn: { width: '100%', marginTop: 24, gap: 10 },
+  timerButtons: { flexDirection: 'row', gap: 10, width: '100%' },
   timerActionButton: { flex: 1, paddingVertical: 14, borderRadius: BORDER_RADIUS.md, alignItems: 'center', borderWidth: 1 },
   timerKnow: { backgroundColor: '#f0fdf4', borderColor: '#16a34a40' },
   timerKnowText: { fontSize: 15, fontWeight: '600', color: '#16a34a' },
   timerDontKnow: { backgroundColor: '#fef2f2', borderColor: '#dc262640' },
   timerDontKnowText: { fontSize: 15, fontWeight: '600', color: '#dc2626' },
+  addTimeButton: {
+    alignSelf: 'center', paddingVertical: 8, paddingHorizontal: 20,
+    borderRadius: BORDER_RADIUS.md, borderWidth: 1, borderColor: COLORS.border,
+  },
+  addTimeText: { fontSize: 13, color: COLORS.textSecondary, fontWeight: '500' },
   timesUpText: { fontSize: 15, fontWeight: '600', color: '#dc2626', marginBottom: 8 },
 
   // Answer buttons
