@@ -12,7 +12,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
-  ActivityIndicator, AppState,
+  ActivityIndicator, AppState, Animated, Modal, Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CefrBadge from '../components/CefrBadge';
@@ -133,6 +133,10 @@ export default function PracticeScreen({ route, navigation }) {
   const [activeTooltip, setActiveTooltip] = useState(null); // 'due' | 'mastered' | 'total' | null
   const tooltipTimerRef = useRef(null);
 
+  // ─── Порожній список: modal + shake ───
+  const [emptyListModal, setEmptyListModal] = useState(false);
+  const shakeAnim = useRef(new Animated.Value(0)).current;
+
   // ─── Сесія ───
   const [currentIndex, setCurrentIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -234,8 +238,26 @@ export default function PracticeScreen({ route, navigation }) {
     };
   }, [activeTooltip]);
 
+  // ─── Shake анімація для порожніх списків ───
+  const triggerShake = () => {
+    shakeAnim.setValue(0);
+    Animated.sequence([
+      Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 8, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -8, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
+    ]).start();
+  };
+
   // ─── Обробка натискання на список ───
   const handleListPress = (list, force = false) => {
+    // Якщо список порожній — shake + модалка
+    if (!list.word_count || list.word_count === 0) {
+      triggerShake();
+      setEmptyListModal(true);
+      return;
+    }
     const st = listStatuses[list.id];
     const isDone = st && st.total > 0 && st.due === 0;
     setSelectedList(list);
@@ -512,26 +534,33 @@ export default function PracticeScreen({ route, navigation }) {
             const total = st?.total || 0;
             const due = st?.due ?? total;
             const reviewed = st?.reviewed_today || 0;
+            const isEmpty = !list.word_count || list.word_count === 0;
 
             // Status: done | partial | due | empty
             let status = 'due';
-            if (total === 0) status = 'empty';
+            if (isEmpty) status = 'empty';
+            else if (total === 0) status = 'empty';
             else if (due === 0) status = 'done';
             else if (reviewed > 0) status = 'partial';
 
             return (
-              <View key={list.id} style={[
-                styles.listItem,
-                status === 'done' && styles.listItemDone,
-              ]}>
+              <Animated.View
+                key={list.id}
+                style={[
+                  styles.listItem,
+                  status === 'done' && styles.listItemDone,
+                  isEmpty && styles.listItemEmpty,
+                  isEmpty && { transform: [{ translateX: shakeAnim }] },
+                ]}
+              >
                 <TouchableOpacity
                   style={styles.listItemRow}
                   onPress={() => handleListPress(list)}
-                  activeOpacity={0.6}
+                  activeOpacity={isEmpty ? 0.5 : 0.6}
                 >
-                  <Text style={styles.listEmoji}>{list.emoji || '📚'}</Text>
-                  <Text style={styles.listName}>{list.name}</Text>
-                  <Text style={styles.listCount}>{list.word_count || 0}</Text>
+                  <Text style={[styles.listEmoji, isEmpty && styles.listEmojiEmpty]}>{list.emoji || '📚'}</Text>
+                  <Text style={[styles.listName, isEmpty && styles.listNameEmpty]}>{list.name}</Text>
+                  <Text style={[styles.listCount, isEmpty && styles.listCountEmpty]}>{list.word_count || 0}</Text>
                 </TouchableOpacity>
 
                 {/* Status badge */}
@@ -574,11 +603,51 @@ export default function PracticeScreen({ route, navigation }) {
                     </Text>
                   </View>
                 )}
-              </View>
+                {isEmpty && (
+                  <View style={styles.statusRow}>
+                    <Text style={styles.statusEmpty}>{t('practice.empty_list')}</Text>
+                  </View>
+                )}
+              </Animated.View>
             );
           })}
           <View style={{ height: 40 }} />
         </ScrollView>
+
+        {/* Модалка для порожнього списку */}
+        <Modal
+          visible={emptyListModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setEmptyListModal(false)}
+        >
+          <Pressable style={styles.modalOverlay} onPress={() => setEmptyListModal(false)}>
+            <Pressable style={styles.modalContent} onPress={() => {}}>
+              <Text style={styles.modalIcon}>📭</Text>
+              <Text style={styles.modalTitle}>{t('practice.empty_list_title')}</Text>
+              <Text style={styles.modalMessage}>{t('practice.empty_list_message')}</Text>
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={styles.modalButtonSecondary}
+                  onPress={() => setEmptyListModal(false)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.modalButtonSecondaryText}>OK</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.modalButtonPrimary}
+                  onPress={() => {
+                    setEmptyListModal(false);
+                    navigation.navigate('Translate');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.modalButtonPrimaryText}>{t('practice.add_word_btn')}</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
       </SafeAreaView>
     );
   }
@@ -1002,6 +1071,43 @@ const styles = StyleSheet.create({
   statusContinue: { fontSize: 12, color: '#2563eb', fontWeight: '600' },
   statusDivider: { fontSize: 12, color: COLORS.textHint },
   statusRestart: { fontSize: 12, color: COLORS.textMuted },
+  statusEmpty: { fontSize: 12, color: COLORS.textHint, fontStyle: 'italic' },
+
+  // Empty list styles
+  listItemEmpty: {
+    opacity: 0.55,
+    borderColor: COLORS.borderLight,
+    borderStyle: 'dashed',
+  },
+  listEmojiEmpty: { opacity: 0.5 },
+  listNameEmpty: { color: COLORS.textMuted },
+  listCountEmpty: { color: COLORS.textHint },
+
+  // Empty list modal
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center', alignItems: 'center', padding: 32,
+  },
+  modalContent: {
+    backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.xl, padding: 28,
+    width: '100%', maxWidth: 320, alignItems: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12,
+    elevation: 8,
+  },
+  modalIcon: { fontSize: 36, marginBottom: 12 },
+  modalTitle: { fontSize: 17, fontWeight: '600', color: COLORS.textPrimary, textAlign: 'center', marginBottom: 8 },
+  modalMessage: { fontSize: 14, color: COLORS.textSecondary, textAlign: 'center', lineHeight: 20, marginBottom: 24 },
+  modalButtons: { flexDirection: 'row', gap: 10, width: '100%' },
+  modalButtonSecondary: {
+    flex: 1, paddingVertical: 12, borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1, borderColor: COLORS.border, alignItems: 'center',
+  },
+  modalButtonSecondaryText: { fontSize: 14, fontWeight: '600', color: COLORS.textSecondary },
+  modalButtonPrimary: {
+    flex: 1, paddingVertical: 12, borderRadius: BORDER_RADIUS.md,
+    backgroundColor: COLORS.primary, alignItems: 'center',
+  },
+  modalButtonPrimaryText: { fontSize: 14, fontWeight: '600', color: '#ffffff' },
 
   // Difficulty select
   difficultyHeader: { paddingTop: SPACING.lg, paddingBottom: SPACING.xl },
