@@ -129,6 +129,7 @@ export default function PracticeScreen() {
 
   // ─── Info tooltip ───
   const [activeTooltip, setActiveTooltip] = useState(null); // 'due' | 'mastered' | 'total' | null
+  const tooltipTimerRef = useRef(null);
 
   // ─── Сесія ───
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -146,6 +147,9 @@ export default function PracticeScreen() {
   const [timeLeft, setTimeLeft] = useState(TIMER_SECONDS);
   const [timerExpired, setTimerExpired] = useState(false);
   const timerRef = useRef(null);
+
+  // ─── Остання збережена відповідь (щоб дочекатися перед refresh) ───
+  const lastSubmitRef = useRef(null);
 
   // ─── Завантаження даних для Home ───
   const loadHomeData = useCallback(async () => {
@@ -166,6 +170,17 @@ export default function PracticeScreen() {
   useEffect(() => {
     loadHomeData();
   }, [loadHomeData]);
+
+  // ─── Tooltip auto-dismiss (6 сек) ───
+  useEffect(() => {
+    if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current);
+    if (activeTooltip) {
+      tooltipTimerRef.current = setTimeout(() => setActiveTooltip(null), 6000);
+    }
+    return () => {
+      if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current);
+    };
+  }, [activeTooltip]);
 
   // ─── Обробка натискання на список ───
   const handleListPress = (list, force = false) => {
@@ -280,8 +295,8 @@ export default function PracticeScreen() {
     const progress = word.progress || { ease_factor: 2.5, interval_days: 0, repetitions: 0 };
     const newProgress = calculateNextReview(progress, quality);
 
-    // Зберегти результат на сервері (fire-and-forget)
-    submitPracticeResult(word.id, quality, newProgress).catch(e => {
+    // Зберегти результат на сервері (fire-and-forget, але зберігаємо promise для refresh)
+    lastSubmitRef.current = submitPracticeResult(word.id, quality, newProgress).catch(e => {
       console.warn('Failed to save practice result:', e);
     });
 
@@ -325,7 +340,7 @@ export default function PracticeScreen() {
   };
 
   // ─── Reset ───
-  const reset = () => {
+  const reset = async () => {
     setScreen('home');
     setSelectedList(null);
     setDifficulty(null);
@@ -341,6 +356,11 @@ export default function PracticeScreen() {
     setTimeLeft(TIMER_SECONDS);
     setActiveTooltip(null);
     if (timerRef.current) clearInterval(timerRef.current);
+    // Дочекатися останнього збереження, щоб статуси оновились коректно
+    if (lastSubmitRef.current) {
+      await lastSubmitRef.current;
+      lastSubmitRef.current = null;
+    }
     loadHomeData();
   };
 
@@ -859,9 +879,10 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.lg, padding: SPACING.xl,
     borderWidth: 1, borderColor: COLORS.borderLight, marginBottom: 12,
     shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.03, shadowRadius: 3,
+    zIndex: 10, elevation: 10,
   },
-  statsRow: { flexDirection: 'row', justifyContent: 'space-around' },
-  statItem: { alignItems: 'center', position: 'relative' },
+  statsRow: { flexDirection: 'row', justifyContent: 'space-around', overflow: 'visible' },
+  statItem: { alignItems: 'center', position: 'relative', overflow: 'visible', zIndex: 10 },
   statNumber: { fontSize: 28, fontWeight: '300', fontFamily: 'Courier' },
   statLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
   statLabel: { fontSize: 11, color: COLORS.textMuted },
@@ -869,7 +890,7 @@ const styles = StyleSheet.create({
   tooltip: {
     position: 'absolute', top: '100%', marginTop: 6,
     backgroundColor: COLORS.primary, borderRadius: BORDER_RADIUS.sm, padding: 10,
-    width: 180, zIndex: 10,
+    width: 180, zIndex: 999, elevation: 999,
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6,
   },
   tooltipText: { fontSize: 11, color: '#ffffff', lineHeight: 16, textAlign: 'center' },
