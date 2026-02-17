@@ -2,10 +2,11 @@
  * practiceService.js — Сервіс для повторення слів
  *
  * API:
- * - GET    /practice/stats         — загальна статистика
- * - GET    /practice/:listId       — слова для повторення зі списку
- * - GET    /practice/:listId/all   — усі слова зі списку (для генерації варіантів)
- * - POST   /practice/result        — зберегти результат повторення
+ * - GET    /practice/stats           — загальна статистика
+ * - GET    /practice/list-statuses   — стан повторення кожного списку
+ * - GET    /practice/:listId         — слова для повторення зі списку (?force=true для всіх)
+ * - GET    /practice/:listId/all     — усі слова зі списку (для генерації варіантів)
+ * - POST   /practice/result          — зберегти результат повторення
  */
 
 import { api } from "./apiClient";
@@ -15,8 +16,14 @@ export async function fetchPracticeStats() {
   return res.data;
 }
 
-export async function fetchPracticeWords(listId) {
-  const res = await api.get(`/practice/${listId}`);
+export async function fetchListStatuses() {
+  const res = await api.get("/practice/list-statuses");
+  return res.data;
+}
+
+export async function fetchPracticeWords(listId, force = false) {
+  const params = force ? { force: "true" } : {};
+  const res = await api.get(`/practice/${listId}`, { params });
   return res.data;
 }
 

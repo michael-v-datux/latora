@@ -22,6 +22,7 @@ import {
   fetchPracticeStats,
   fetchPracticeWords,
   fetchAllListWords,
+  fetchListStatuses,
   submitPracticeResult,
 } from '../services/practiceService';
 import { COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
@@ -119,10 +120,12 @@ export default function PracticeScreen() {
   // ─── Дані ───
   const [lists, setLists] = useState([]);
   const [practiceStats, setPracticeStats] = useState({ due: 0, mastered: 0, total: 0 });
+  const [listStatuses, setListStatuses] = useState({}); // { [listId]: { total, due, reviewed_today } }
   const [words, setWords] = useState([]);        // due words для сесії
   const [allListWords, setAllListWords] = useState([]); // усі слова списку (для quiz)
   const [distractors, setDistractors] = useState([]); // додаткові слова для quiz (малі списки)
   const [loading, setLoading] = useState(false);
+  const [forceRestart, setForceRestart] = useState(false); // для "Start over"
 
   // ─── Info tooltip ───
   const [activeTooltip, setActiveTooltip] = useState(null); // 'due' | 'mastered' | 'total' | null
@@ -147,12 +150,14 @@ export default function PracticeScreen() {
   // ─── Завантаження даних для Home ───
   const loadHomeData = useCallback(async () => {
     try {
-      const [listsData, statsData] = await Promise.all([
+      const [listsData, statsData, statusesData] = await Promise.all([
         fetchLists(),
         fetchPracticeStats(),
+        fetchListStatuses(),
       ]);
       setLists(listsData || []);
       setPracticeStats(statsData || { due: 0, mastered: 0, total: 0 });
+      setListStatuses(statusesData?.statuses || {});
     } catch (e) {
       console.warn('Failed to load practice home data:', e);
     }
@@ -163,8 +168,9 @@ export default function PracticeScreen() {
   }, [loadHomeData]);
 
   // ─── Обробка натискання на список ───
-  const handleListPress = (list) => {
+  const handleListPress = (list, force = false) => {
     setSelectedList(list);
+    setForceRestart(force);
     setScreen('difficulty');
   };
 
@@ -174,7 +180,7 @@ export default function PracticeScreen() {
     setLoading(true);
     try {
       const [practiceData, allData] = await Promise.all([
-        fetchPracticeWords(selectedList.id),
+        fetchPracticeWords(selectedList.id, forceRestart),
         level === 2 ? fetchAllListWords(selectedList.id) : Promise.resolve({ words: [] }),
       ]);
 
@@ -323,6 +329,7 @@ export default function PracticeScreen() {
     setScreen('home');
     setSelectedList(null);
     setDifficulty(null);
+    setForceRestart(false);
     setWords([]);
     setAllListWords([]);
     setDistractors([]);
@@ -416,18 +423,73 @@ export default function PracticeScreen() {
               <Text style={styles.emptyListSubtext}>{t('practice.no_words_subtitle')}</Text>
             </View>
           )}
-          {lists.map(list => (
-            <TouchableOpacity
-              key={list.id}
-              style={styles.listItem}
-              onPress={() => handleListPress(list)}
-              activeOpacity={0.6}
-            >
-              <Text style={styles.listEmoji}>{list.emoji || '📚'}</Text>
-              <Text style={styles.listName}>{list.name}</Text>
-              <Text style={styles.listCount}>{list.word_count || 0}</Text>
-            </TouchableOpacity>
-          ))}
+          {lists.map(list => {
+            const st = listStatuses[list.id];
+            const total = st?.total || 0;
+            const due = st?.due ?? total;
+            const reviewed = st?.reviewed_today || 0;
+
+            // Status: done | partial | due | empty
+            let status = 'due';
+            if (total === 0) status = 'empty';
+            else if (due === 0) status = 'done';
+            else if (reviewed > 0) status = 'partial';
+
+            return (
+              <View key={list.id} style={[
+                styles.listItem,
+                status === 'done' && styles.listItemDone,
+              ]}>
+                <TouchableOpacity
+                  style={styles.listItemRow}
+                  onPress={() => handleListPress(list)}
+                  activeOpacity={0.6}
+                >
+                  <Text style={styles.listEmoji}>{list.emoji || '📚'}</Text>
+                  <Text style={styles.listName}>{list.name}</Text>
+                  <Text style={styles.listCount}>{list.word_count || 0}</Text>
+                </TouchableOpacity>
+
+                {/* Status badge */}
+                {status === 'done' && (
+                  <View style={[styles.statusRow, { borderTopColor: '#bbf7d0' }]}>
+                    <Text style={styles.statusDone}>✅ {t('practice.status_done')}</Text>
+                  </View>
+                )}
+                {status === 'partial' && (
+                  <View style={styles.statusRow}>
+                    <Text style={styles.statusPartial}>
+                      🔄 {t('practice.status_partial', { done: total - due, total })}
+                    </Text>
+                    <View style={styles.statusActions}>
+                      <TouchableOpacity
+                        onPress={() => handleListPress(list)}
+                        activeOpacity={0.6}
+                        hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
+                      >
+                        <Text style={styles.statusContinue}>{t('practice.continue')}</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.statusDivider}>·</Text>
+                      <TouchableOpacity
+                        onPress={() => handleListPress(list, true)}
+                        activeOpacity={0.6}
+                        hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
+                      >
+                        <Text style={styles.statusRestart}>{t('practice.restart')}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+                {status === 'due' && (
+                  <View style={styles.statusRow}>
+                    <Text style={styles.statusDue}>
+                      {t('practice.status_due', { count: due })}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            );
+          })}
           <View style={{ height: 40 }} />
         </ScrollView>
       </SafeAreaView>
@@ -815,13 +877,32 @@ const styles = StyleSheet.create({
   // Списки
   sectionLabel: { fontSize: 12, color: COLORS.textMuted, letterSpacing: 0.5, marginBottom: 10, marginTop: 4 },
   listItem: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
     backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.md,
-    padding: 11, marginBottom: 6, borderWidth: 1, borderColor: COLORS.borderLight,
+    paddingHorizontal: 11, paddingTop: 11, paddingBottom: 11,
+    marginBottom: 6, borderWidth: 1, borderColor: COLORS.borderLight,
+  },
+  listItemDone: {
+    backgroundColor: '#f0fdf4', borderColor: '#bbf7d0',
+  },
+  listItemRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
   },
   listEmoji: { fontSize: 16 },
   listName: { flex: 1, fontSize: 14, color: COLORS.textPrimary },
   listCount: { fontSize: 12, color: COLORS.textMuted },
+
+  // Status badges
+  statusRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginTop: 7, paddingTop: 7, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.borderLight,
+  },
+  statusDone: { fontSize: 12, color: '#16a34a', fontWeight: '500' },
+  statusPartial: { fontSize: 12, color: '#ea580c' },
+  statusDue: { fontSize: 12, color: COLORS.textMuted },
+  statusActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  statusContinue: { fontSize: 12, color: '#2563eb', fontWeight: '600' },
+  statusDivider: { fontSize: 12, color: COLORS.textHint },
+  statusRestart: { fontSize: 12, color: COLORS.textMuted },
 
   // Difficulty select
   difficultyHeader: { paddingTop: SPACING.lg, paddingBottom: SPACING.xl },

@@ -142,6 +142,12 @@
     "tooltip_total": "Total unique words across all your lists",
     "words_one": "{{count}} word",
     "words_other": "{{count}} words",
+    "status_done": "Done today",
+    "status_partial": "{{done}}/{{total}} reviewed",
+    "status_due_one": "{{count}} word to review",
+    "status_due_other": "{{count}} words to review",
+    "continue": "Continue ›",
+    "restart": "Start over",
     "difficulty": {
       "hint": "Hint",
       "hint_desc": "Translation with hidden letters",
