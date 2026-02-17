@@ -24,6 +24,7 @@ import {
   fetchAllListWords,
   fetchListStatuses,
   submitPracticeResult,
+  logPracticeSession,
 } from '../services/practiceService';
 import { COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
 import { useI18n } from '../i18n';
@@ -109,7 +110,7 @@ function generateOptions(correctWord, allWords, distractors = []) {
 // Компонент
 // ═══════════════════════════════════════════════════════════════
 
-export default function PracticeScreen() {
+export default function PracticeScreen({ route, navigation }) {
   const { t } = useI18n();
 
   // ─── Стан навігації ───
@@ -126,6 +127,7 @@ export default function PracticeScreen() {
   const [distractors, setDistractors] = useState([]); // додаткові слова для quiz (малі списки)
   const [loading, setLoading] = useState(false);
   const [forceRestart, setForceRestart] = useState(false); // для "Start over"
+  const [sessionsToday, setSessionsToday] = useState(0); // кількість завершених сесій за сьогодні
 
   // ─── Info tooltip ───
   const [activeTooltip, setActiveTooltip] = useState(null); // 'due' | 'mastered' | 'total' | null
@@ -209,6 +211,18 @@ export default function PracticeScreen() {
     };
   }, [loadHomeData]);
 
+  // ─── Навігація з інших табів (Lists → Practice) ───
+  useEffect(() => {
+    const startListId = route?.params?.startListId;
+    const startListName = route?.params?.startListName;
+    if (startListId && screen === 'home' && lists.length > 0) {
+      const list = lists.find(l => l.id === startListId)
+        || { id: startListId, name: startListName || 'List', word_count: 0 };
+      handleListPress(list, true);
+      navigation.setParams({ startListId: undefined, startListName: undefined });
+    }
+  }, [route?.params?.startListId, lists, screen]);
+
   // ─── Tooltip auto-dismiss (6 сек) ───
   useEffect(() => {
     if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current);
@@ -222,8 +236,11 @@ export default function PracticeScreen() {
 
   // ─── Обробка натискання на список ───
   const handleListPress = (list, force = false) => {
+    const st = listStatuses[list.id];
+    const isDone = st && st.total > 0 && st.due === 0;
     setSelectedList(list);
-    setForceRestart(force);
+    setForceRestart(force || isDone); // завжди force для пройдених списків
+    setSessionsToday(st?.sessions_today || 0);
     setScreen('difficulty');
   };
 
@@ -341,6 +358,13 @@ export default function PracticeScreen() {
 
     // Перейти до наступного слова або завершити
     if (currentIndex + 1 >= words.length) {
+      // Логуємо завершену сесію (fire-and-forget)
+      const finalStats = { ...stats, [quality]: stats[quality] + 1 };
+      const correctCount = finalStats.easy + finalStats.good;
+      logPracticeSession(selectedList.id, words.length, correctCount).catch(e => {
+        console.warn('Failed to log practice session:', e);
+      });
+      setSessionsToday(prev => prev + 1);
       setScreen('results');
     } else {
       const nextIndex = currentIndex + 1;
@@ -384,6 +408,7 @@ export default function PracticeScreen() {
     setSelectedList(null);
     setDifficulty(null);
     setForceRestart(false);
+    setSessionsToday(0);
     setWords([]);
     setAllListWords([]);
     setDistractors([]);
@@ -513,6 +538,9 @@ export default function PracticeScreen() {
                 {status === 'done' && (
                   <View style={[styles.statusRow, { borderTopColor: '#bbf7d0' }]}>
                     <Text style={styles.statusDone}>✅ {t('practice.status_done')}</Text>
+                    {(st?.sessions_today || 0) >= 2 && (
+                      <Text style={styles.streakBadge}>🔥 X{st.sessions_today}</Text>
+                    )}
                   </View>
                 )}
                 {status === 'partial' && (
@@ -600,9 +628,20 @@ export default function PracticeScreen() {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.finishedContainer}>
-          <View style={styles.checkCircle}>
-            <Text style={styles.checkMark}>✓</Text>
-          </View>
+          {/* Streak multiplier або звичайний checkmark */}
+          {sessionsToday >= 2 ? (
+            <View style={styles.streakContainer}>
+              <Text style={styles.streakEmoji}>🔥</Text>
+              <Text style={styles.streakMultiplier}>X{sessionsToday}</Text>
+              <Text style={styles.streakText}>
+                {t('practice.streak_message', { count: sessionsToday })}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.checkCircle}>
+              <Text style={styles.checkMark}>✓</Text>
+            </View>
+          )}
           <Text style={styles.finishedTitle}>{t('practice.session_complete')}</Text>
 
           {/* Відсоток */}
@@ -1064,6 +1103,11 @@ const styles = StyleSheet.create({
 
   // Результати
   finishedContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: SPACING.xl },
+  streakContainer: { alignItems: 'center', marginBottom: 8 },
+  streakEmoji: { fontSize: 40 },
+  streakMultiplier: { fontSize: 28, fontWeight: '700', color: '#ea580c', fontFamily: 'Courier' },
+  streakText: { fontSize: 13, color: '#ea580c', marginTop: 2 },
+  streakBadge: { fontSize: 12, fontWeight: '700', color: '#ea580c' },
   checkCircle: {
     width: 56, height: 56, borderRadius: 28, backgroundColor: '#f0fdf4',
     justifyContent: 'center', alignItems: 'center', marginBottom: 16,

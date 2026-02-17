@@ -37,6 +37,8 @@ import {
   bulkDeleteWords,
   moveWords,
 } from '../services/listsService';
+import { fetchSessionCounts } from '../services/practiceService';
+import { useI18n } from '../i18n';
 
 // --- Helpers: normalize idiom fields coming from Supabase/HTTP ---
 // --- Helpers: normalize idiom fields coming from Supabase/HTTP ---
@@ -85,7 +87,8 @@ const isIdiomatic = (item) => {
 };
 
 
-export default function ListsScreen() {
+export default function ListsScreen({ navigation }) {
+  const { t } = useI18n();
   const [lists, setLists] = useState([]);
   const [selectedList, setSelectedList] = useState(null);
   const [selectedWords, setSelectedWords] = useState([]);
@@ -93,6 +96,7 @@ export default function ListsScreen() {
   const [loadingLists, setLoadingLists] = useState(true);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [lifetimeSessions, setLifetimeSessions] = useState(null);
 
   // Bulk mode
   const [bulkMode, setBulkMode] = useState(false);
@@ -132,10 +136,14 @@ export default function ListsScreen() {
     setSelectedList(list);
     setLoadingDetails(true);
     setSelectedWords([]);
+    setLifetimeSessions(null);
     setBulkMode(false);
     setSelectedWordIds(new Set());
     try {
-      const details = await fetchListDetails(list.id);
+      const [details, sessionData] = await Promise.all([
+        fetchListDetails(list.id),
+        fetchSessionCounts([list.id]).catch(() => ({ counts: {} })),
+      ]);
       const words = (details?.words || []).map((w) => ({
         id: w.id,
         original: w.original,
@@ -152,6 +160,7 @@ export default function ListsScreen() {
         part_of_speech: w.part_of_speech,
       }));
       setSelectedWords(words);
+      setLifetimeSessions(sessionData?.counts?.[list.id] || 0);
     } catch (e) {
       console.warn('Failed to fetch list details:', e?.message);
       Alert.alert('Помилка', 'Не вдалося завантажити слова списку');
@@ -390,6 +399,31 @@ export default function ListsScreen() {
               </Text>
             </View>
           </View>
+
+          {/* Practice info */}
+          {!loadingDetails && (
+            <View style={styles.practiceInfoRow}>
+              <Text style={styles.practiceInfoText}>
+                {lifetimeSessions !== null && lifetimeSessions > 0
+                  ? t('lists.reviewed_times', { count: lifetimeSessions })
+                  : t('lists.not_reviewed_yet')
+                }
+              </Text>
+              <TouchableOpacity
+                style={styles.practiceButton}
+                onPress={() => {
+                  navigation.navigate('Practice', {
+                    startListId: selectedList.id,
+                    startListName: selectedList.name,
+                  });
+                }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="fitness-outline" size={16} color="#ffffff" />
+                <Text style={styles.practiceButtonText}>{t('lists.practice_button')}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {loadingDetails ? (
             <View style={{ paddingTop: 30, alignItems: 'center' }}>
@@ -839,9 +873,22 @@ const styles = StyleSheet.create({
   backText: { fontSize: 13, color: COLORS.textMuted },
   bulkToggle: { paddingVertical: SPACING.lg, paddingHorizontal: 6 },
   bulkToggleText: { fontSize: 13, color: COLORS.textMuted },
-  listHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: SPACING.xl },
+  listHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: SPACING.sm },
   listTitle: { fontSize: 24, fontWeight: '400', color: COLORS.primary },
   listSubtitle: { fontSize: 12, color: COLORS.textMuted },
+
+  // Practice info
+  practiceInfoRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: SPACING.lg, paddingVertical: SPACING.sm, paddingHorizontal: 2,
+  },
+  practiceInfoText: { fontSize: 12, color: COLORS.textMuted, flex: 1 },
+  practiceButton: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: COLORS.primary, paddingVertical: 8, paddingHorizontal: 14,
+    borderRadius: BORDER_RADIUS.md,
+  },
+  practiceButtonText: { fontSize: 13, color: '#ffffff', fontWeight: '600' },
 
   // Word item
   wordItem: {
