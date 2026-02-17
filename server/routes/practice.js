@@ -169,10 +169,50 @@ router.get("/practice/list-statuses", requireAuth, async (req, res, next) => {
         }
       }
 
-      statuses[listId] = { total: wids.length, due, reviewed_today: reviewedToday };
+      statuses[listId] = { total: wids.length, due, reviewed_today: reviewedToday, sessions_today: 0 };
+    }
+
+    // 6. Рахуємо завершені сесії за сьогодні
+    const { data: sessions, error: sessErr } = await supabase
+      .from("practice_sessions")
+      .select("list_id, completed_at")
+      .in("list_id", listIds);
+
+    if (!sessErr && sessions) {
+      for (const s of sessions) {
+        if (new Date(s.completed_at) >= todayStart && statuses[s.list_id]) {
+          statuses[s.list_id].sessions_today++;
+        }
+      }
     }
 
     return res.json({ statuses });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// GET /api/practice/session-counts — кількість завершених сесій за весь час (по списках)
+// ВАЖЛИВО: цей маршрут ПЕРЕД /:listId
+router.get("/practice/session-counts", requireAuth, async (req, res, next) => {
+  try {
+    const supabase = req.supabase;
+    const listIds = req.query.listIds ? req.query.listIds.split(",") : null;
+
+    let query = supabase.from("practice_sessions").select("list_id");
+    if (listIds) {
+      query = query.in("list_id", listIds);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const counts = {};
+    for (const row of data || []) {
+      counts[row.list_id] = (counts[row.list_id] || 0) + 1;
+    }
+
+    return res.json({ counts });
   } catch (error) {
     return next(error);
   }
@@ -299,6 +339,35 @@ router.post("/practice/result", requireAuth, async (req, res, next) => {
     const { data, error } = await supabase
       .from("user_word_progress")
       .upsert(payload, { onConflict: "user_id,word_id" })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return res.json(data);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// POST /api/practice/session — зберегти завершену сесію повторення
+router.post("/practice/session", requireAuth, async (req, res, next) => {
+  try {
+    const supabase = req.supabase;
+    const { listId, wordCount, correctCount } = req.body;
+
+    if (!listId) {
+      return res.status(400).json({ error: "listId обов'язковий" });
+    }
+
+    const { data, error } = await supabase
+      .from("practice_sessions")
+      .insert({
+        user_id: req.user.id,
+        list_id: listId,
+        word_count: wordCount || 0,
+        correct_count: correctCount || 0,
+      })
       .select()
       .single();
 

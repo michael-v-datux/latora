@@ -94,7 +94,11 @@
     "words_one": "{{count}} word",
     "words_other": "{{count}} words",
     "lists_one": "{{count}} list",
-    "lists_other": "{{count}} lists"
+    "lists_other": "{{count}} lists",
+    "reviewed_times_one": "Reviewed {{count}} time",
+    "reviewed_times_other": "Reviewed {{count}} times",
+    "not_reviewed_yet": "You haven't reviewed these words yet",
+    "practice_button": "Practice"
   },
   "profile": {
     "title": "Profile",
@@ -148,6 +152,7 @@
     "status_due_other": "{{count}} words to review",
     "continue": "Continue ›",
     "restart": "Start over",
+    "streak_message": "Review #{{count}} today! Keep it up 🔥",
     "difficulty": {
       "hint": "Hint",
       "hint_desc": "Translation with hidden letters",
