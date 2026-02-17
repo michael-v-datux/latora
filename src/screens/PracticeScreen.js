@@ -12,7 +12,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
-  ActivityIndicator,
+  ActivityIndicator, AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CefrBadge from '../components/CefrBadge';
@@ -148,8 +148,8 @@ export default function PracticeScreen() {
   const [timerExpired, setTimerExpired] = useState(false);
   const timerRef = useRef(null);
 
-  // ─── Остання збережена відповідь (щоб дочекатися перед refresh) ───
-  const lastSubmitRef = useRef(null);
+  // ─── Усі збережені відповіді сесії (щоб дочекатися перед refresh) ───
+  const pendingSubmitsRef = useRef([]);
 
   // ─── Завантаження даних для Home ───
   const loadHomeData = useCallback(async () => {
@@ -169,6 +169,44 @@ export default function PracticeScreen() {
 
   useEffect(() => {
     loadHomeData();
+  }, [loadHomeData]);
+
+  // ─── Автооновлення при настанні нового дня (опівніч) + при поверненні в додаток ───
+  const lastLoadDateRef = useRef(new Date().toDateString());
+
+  useEffect(() => {
+    // 1. Таймер на опівніч
+    let timerId;
+    const scheduleNextMidnight = () => {
+      const now = new Date();
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(0, 0, 5, 0); // 00:00:05 — з невеликим запасом
+      const msUntilMidnight = tomorrow - now;
+      timerId = setTimeout(() => {
+        lastLoadDateRef.current = new Date().toDateString();
+        loadHomeData();
+        scheduleNextMidnight();
+      }, msUntilMidnight);
+    };
+    scheduleNextMidnight();
+
+    // 2. При поверненні з фону — перевіряємо чи змінився день
+    const handleAppState = (nextState) => {
+      if (nextState === 'active') {
+        const today = new Date().toDateString();
+        if (today !== lastLoadDateRef.current) {
+          lastLoadDateRef.current = today;
+          loadHomeData();
+        }
+      }
+    };
+    const sub = AppState.addEventListener('change', handleAppState);
+
+    return () => {
+      clearTimeout(timerId);
+      sub.remove();
+    };
   }, [loadHomeData]);
 
   // ─── Tooltip auto-dismiss (6 сек) ───
@@ -295,10 +333,11 @@ export default function PracticeScreen() {
     const progress = word.progress || { ease_factor: 2.5, interval_days: 0, repetitions: 0 };
     const newProgress = calculateNextReview(progress, quality);
 
-    // Зберегти результат на сервері (fire-and-forget, але зберігаємо promise для refresh)
-    lastSubmitRef.current = submitPracticeResult(word.id, quality, newProgress).catch(e => {
+    // Зберегти результат на сервері (fire-and-forget, але збираємо promises для refresh)
+    const p = submitPracticeResult(word.id, quality, newProgress).catch(e => {
       console.warn('Failed to save practice result:', e);
     });
+    pendingSubmitsRef.current.push(p);
 
     // Перейти до наступного слова або завершити
     if (currentIndex + 1 >= words.length) {
@@ -356,10 +395,10 @@ export default function PracticeScreen() {
     setTimeLeft(TIMER_SECONDS);
     setActiveTooltip(null);
     if (timerRef.current) clearInterval(timerRef.current);
-    // Дочекатися останнього збереження, щоб статуси оновились коректно
-    if (lastSubmitRef.current) {
-      await lastSubmitRef.current;
-      lastSubmitRef.current = null;
+    // Дочекатися ВСІХ збережень сесії, щоб статуси оновились коректно
+    if (pendingSubmitsRef.current.length > 0) {
+      await Promise.all(pendingSubmitsRef.current);
+      pendingSubmitsRef.current = [];
     }
     loadHomeData();
   };

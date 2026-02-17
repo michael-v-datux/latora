@@ -17,7 +17,9 @@ export async function fetchPracticeStats() {
 }
 
 export async function fetchListStatuses() {
-  const res = await api.get("/practice/list-statuses");
+  // Передаємо таймзону клієнта, щоб сервер правильно рахував "сьогодні"
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone; // e.g. "Europe/Kyiv"
+  const res = await api.get("/practice/list-statuses", { params: { tz } });
   return res.data;
 }
 

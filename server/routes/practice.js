@@ -127,10 +127,30 @@ router.get("/practice/list-statuses", requireAuth, async (req, res, next) => {
 
     const progressMap = new Map((progress || []).map((p) => [p.word_id, p]));
 
-    // Визначаємо початок сьогоднішнього дня (UTC)
+    // Визначаємо початок сьогоднішнього дня в таймзоні клієнта
     const now = new Date();
-    const todayStart = new Date(now);
-    todayStart.setHours(0, 0, 0, 0);
+    const clientTz = req.query.tz || "UTC";
+    let todayStart;
+    try {
+      // Дістаємо локальну дату користувача (формат "2025-01-15")
+      const localDateStr = now.toLocaleDateString("en-CA", { timeZone: clientTz });
+      // Знаходимо UTC-еквівалент опівночі в таймзоні клієнта:
+      // Створюємо дату "YYYY-MM-DDT00:00:00" і конвертуємо з клієнтської TZ в UTC
+      const parts = localDateStr.split("-");
+      const year = parseInt(parts[0]);
+      const month = parseInt(parts[1]) - 1;
+      const day = parseInt(parts[2]);
+      // Створюємо опівніч в UTC, потім корегуємо на offset таймзони
+      const probe = new Date(Date.UTC(year, month, day, 12, 0, 0)); // полудень UTC для безпеки
+      const utcStr = probe.toLocaleString("en-US", { timeZone: "UTC" });
+      const tzStr = probe.toLocaleString("en-US", { timeZone: clientTz });
+      const offsetMs = new Date(utcStr) - new Date(tzStr);
+      todayStart = new Date(Date.UTC(year, month, day, 0, 0, 0) + offsetMs);
+    } catch {
+      // Fallback на UTC якщо таймзона некоректна
+      todayStart = new Date(now);
+      todayStart.setUTCHours(0, 0, 0, 0);
+    }
 
     // 5. Рахуємо статуси для кожного списку
     const statuses = {};
