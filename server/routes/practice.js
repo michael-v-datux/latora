@@ -72,7 +72,7 @@ router.get("/practice/stats", requireAuth, async (req, res, next) => {
   }
 });
 
-// GET /api/practice/:listId/all — усі слова зі списку (для генерації варіантів quiz)
+// GET /api/practice/:listId/all — усі слова зі списку + дистрактори для quiz
 // ВАЖЛИВО: цей маршрут ПЕРЕД загальним /:listId
 router.get("/practice/:listId/all", requireAuth, async (req, res, next) => {
   try {
@@ -87,8 +87,30 @@ router.get("/practice/:listId/all", requireAuth, async (req, res, next) => {
     if (error) throw error;
 
     const words = (data || []).map((d) => d.words);
+    const wordIds = words.map((w) => w.id);
 
-    return res.json({ words });
+    // Якщо слів у списку мало (< 6) — підтягуємо додаткові з БД для quiz-дистракторів
+    let distractors = [];
+    if (words.length < 6) {
+      const admin = require("../lib/supabase.admin.cjs");
+      // Беремо випадкові слова тієї ж мовної пари, яких немає в списку
+      const sampleLang = words[0];
+      if (sampleLang) {
+        const { data: extra, error: extraErr } = await admin
+          .from("words")
+          .select("id, translation")
+          .eq("source_lang", sampleLang.source_lang)
+          .eq("target_lang", sampleLang.target_lang)
+          .not("id", "in", `(${wordIds.join(",")})`)
+          .limit(10);
+
+        if (!extraErr && extra) {
+          distractors = extra;
+        }
+      }
+    }
+
+    return res.json({ words, distractors });
   } catch (error) {
     return next(error);
   }

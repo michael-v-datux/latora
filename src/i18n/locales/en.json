@@ -136,6 +136,10 @@
     "score": "Score",
     "end": "End",
     "next": "Next",
+    "add_time": "+3 sec",
+    "tooltip_due": "Words that need review today based on your spaced repetition schedule",
+    "tooltip_mastered": "Words you've successfully reviewed 5+ times with high confidence",
+    "tooltip_total": "Total unique words across all your lists",
     "words_one": "{{count}} word",
     "words_other": "{{count}} words",
     "difficulty": {
