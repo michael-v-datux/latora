@@ -197,24 +197,37 @@ router.post('/translate', async (req, res) => {
       ? idiom.idiomatic_translations[0]
       : deeplTranslation;
 
-    // Крок 3: AI-оцінка складності
-    console.log(`🧠 Оцінюємо складність: "${cleanWord}"`);
-    const difficulty = await assessDifficulty(cleanWord, primaryTranslation);
+    // Крок 3: Difficulty Engine v2 (BaseScore + AI Adjustment)
+    console.log(`🧠 Оцінюємо складність v2: "${cleanWord}"`);
+    const difficulty = await assessDifficulty(cleanWord, primaryTranslation, {
+      sourceLang: srcLang,
+      targetLang: tgtLang,
+    });
 
-    // Крок 4: Зберігаємо в базу
+    // Крок 4: Зберігаємо в базу (включаючи нові поля v2)
     const wordData = {
       original: cleanWord,
       source_lang: srcLang,
       target_lang: tgtLang,
       translation: primaryTranslation,
-      transcription: difficulty.transcription,
+      transcription:    difficulty.transcription,
       difficulty_score: difficulty.difficulty_score,
-      cefr_level: difficulty.cefr_level,
+      cefr_level:       difficulty.cefr_level,
       difficulty_factors: difficulty.factors,
       example_sentence: difficulty.example_sentence,
-      part_of_speech: difficulty.part_of_speech,
+      part_of_speech:   difficulty.part_of_speech,
 
-      // Для ідіом: зберігаємо ідіоматичні варіанти + literal(DeepL) для UI (idiomatic vs literal)
+      // ── Difficulty Engine v2: нові поля ──────────────────────────
+      base_score:       difficulty.base_score,
+      ai_adjustment:    difficulty.ai_adjustment,
+      confidence_score: difficulty.confidence_score,
+      frequency_band:   difficulty.frequency_band,
+      polysemy_level:   difficulty.polysemy_level,
+      morph_complexity: difficulty.morph_complexity,
+      phrase_flag:      difficulty.phrase_flag,
+      // ─────────────────────────────────────────────────────────────
+
+      // Для ідіом: зберігаємо ідіоматичні варіанти + literal(DeepL)
       alt_translations: (idiom && idiom.is_idiom)
         ? {
             idiomatic: idiom.idiomatic_translations,
@@ -222,7 +235,7 @@ router.post('/translate', async (req, res) => {
           }
         : null,
       translation_notes: (idiom && idiom.is_idiom) ? idiom.note : null,
-      translation_kind: (idiom && idiom.is_idiom) ? 'idiom' : null,
+      translation_kind:  (idiom && idiom.is_idiom) ? 'idiom' : null,
     };
 
     const { data: saved, error: saveError } = await supabaseAdmin

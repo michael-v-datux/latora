@@ -36,11 +36,14 @@ export async function fetchAllListWords(listId) {
   return res.data;
 }
 
-export async function submitPracticeResult(wordId, quality, newProgress) {
+export async function submitPracticeResult(wordId, quality, newProgress, opts = {}) {
   const res = await api.post("/practice/result", {
     wordId,
     quality,
     newProgress,
+    sessionId:    opts.sessionId    ?? null,
+    listId:       opts.listId       ?? null,
+    answerTimeMs: opts.answerTimeMs ?? null,
   });
   return res.data;
 }

@@ -163,6 +163,11 @@ export default function ListsScreen({ navigation }) {
         translation_notes: w.translation_notes,
         translation_kind: w.translation_kind,
         part_of_speech: w.part_of_speech,
+
+        // v2: word state + personal score from user_word_progress
+        word_state:      w.word_state      ?? null,
+        personal_score:  w.personal_score  ?? null,
+        trend_direction: w.trend_direction ?? null,
       }));
       setSelectedWords(words);
       setLifetimeSessions(sessionData?.counts?.[list.id] || 0);
@@ -193,6 +198,11 @@ export default function ListsScreen({ navigation }) {
         translation_notes: w.translation_notes,
         translation_kind: w.translation_kind,
         part_of_speech: w.part_of_speech,
+
+        // v2: word state + personal score from user_word_progress
+        word_state:      w.word_state      ?? null,
+        personal_score:  w.personal_score  ?? null,
+        trend_direction: w.trend_direction ?? null,
       }));
       setSelectedWords(words);
     } catch (e) {
@@ -488,6 +498,23 @@ export default function ListsScreen({ navigation }) {
                       <View style={styles.wordHeader}>
                         <Text style={styles.wordOriginal}>{item.original}</Text>
                         <CefrBadge level={item.cefr} small />
+                        {item.word_state && item.word_state !== 'new' && (() => {
+                          const STATE_COLORS = {
+                            learning:    { color: '#2563eb', bg: '#eff6ff' },
+                            stabilizing: { color: '#ca8a04', bg: '#fefce8' },
+                            mastered:    { color: '#16a34a', bg: '#f0fdf4' },
+                            decaying:    { color: '#dc2626', bg: '#fef2f2' },
+                          };
+                          const sc = STATE_COLORS[item.word_state];
+                          if (!sc) return null;
+                          return (
+                            <View style={[styles.wordStateBadge, { backgroundColor: sc.bg }]}>
+                              <Text style={[styles.wordStateBadgeText, { color: sc.color }]}>
+                                {t(`word.state_${item.word_state}`)}
+                              </Text>
+                            </View>
+                          );
+                        })()}
                       </View>
                       <Text style={styles.wordTranslation}>{item.translation}</Text>
                       {(item.source_lang || item.target_lang) && (
@@ -1056,6 +1083,15 @@ const styles = StyleSheet.create({
   fontSize: 12,
   fontWeight: '700',
 },
+  wordStateBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  wordStateBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
   wordAltTranslations: {
   marginTop: 12,
 },

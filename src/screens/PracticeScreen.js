@@ -17,7 +17,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import CefrBadge from '../components/CefrBadge';
-import { calculateNextReview, sortWordsForReview } from '../services/srsService';
+import { calculateFullProgress, sortWordsForReview } from '../services/srsService';
 import { fetchLists } from '../services/listsService';
 import {
   fetchPracticeStats,
@@ -179,6 +179,10 @@ export default function PracticeScreen({ route, navigation }) {
   const [timeLeft, setTimeLeft] = useState(TIMER_SECONDS);
   const [timerExpired, setTimerExpired] = useState(false);
   const timerRef = useRef(null);
+
+  // ─── Сесія: ID та таймер відповіді ───
+  const [sessionId, setSessionId] = useState(null);  // FK practice_sessions
+  const answerStartRef = useRef(null);               // timestamp початку показу картки
 
   // ─── Усі збережені відповіді сесії (щоб дочекатися перед refresh) ───
   const pendingSubmitsRef = useRef([]);
@@ -343,6 +347,8 @@ export default function PracticeScreen({ route, navigation }) {
       setQuizAnswered(null);
       setTimerExpired(false);
       setTimeLeft(TIMER_SECONDS);
+      setSessionId(null); // скидаємо, оновиться після першої відповіді
+      answerStartRef.current = Date.now();
 
       // Підготувати дані для першого слова
       prepareWord(sorted[0], level, allData.words || sorted, quizDistractors);
@@ -369,6 +375,7 @@ export default function PracticeScreen({ route, navigation }) {
       setTimeLeft(TIMER_SECONDS);
     }
     setRevealed(false);
+    answerStartRef.current = Date.now(); // фіксуємо момент показу картки
   };
 
   // ─── Timer (Level 4) ───
@@ -406,12 +413,23 @@ export default function PracticeScreen({ route, navigation }) {
     const word = words[currentIndex];
     setStats(prev => ({ ...prev, [quality]: prev[quality] + 1 }));
 
-    // Розрахувати наступне повторення (SM-2)
+    // Вимірюємо час відповіді
+    const answerTimeMs = answerStartRef.current ? Date.now() - answerStartRef.current : null;
+
+    // Розрахувати SM-2 + Personal Layer v2
     const progress = word.progress || { ease_factor: 2.5, interval_days: 0, repetitions: 0 };
-    const newProgress = calculateNextReview(progress, quality);
+    const finalScore = word.difficulty_score ?? word.base_score ?? 50;
+    const recentEvents = word.recent_events || [];
+    const newProgress = calculateFullProgress(progress, quality, finalScore, recentEvents);
 
     // Зберегти результат на сервері (fire-and-forget, але збираємо promises для refresh)
-    const p = submitPracticeResult(word.id, quality, newProgress).catch(e => {
+    const p = submitPracticeResult(word.id, quality, newProgress, {
+      sessionId,
+      listId: selectedList?.id ?? null,
+      answerTimeMs,
+    }).then(res => {
+      // Якщо сесія ще не є — отримаємо id після першого збереження (поки не потрібно)
+    }).catch(e => {
       console.warn('Failed to save practice result:', e);
     });
     pendingSubmitsRef.current.push(p);
@@ -479,6 +497,8 @@ export default function PracticeScreen({ route, navigation }) {
     setTimerExpired(false);
     setTimeLeft(TIMER_SECONDS);
     setActiveTooltip(null);
+    setSessionId(null);
+    answerStartRef.current = null;
     if (timerRef.current) clearInterval(timerRef.current);
     // Дочекатися ВСІХ збережень сесії, щоб статуси оновились коректно
     if (pendingSubmitsRef.current.length > 0) {
