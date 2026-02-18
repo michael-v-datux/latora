@@ -186,30 +186,23 @@ router.get("/practice/list-statuses", requireAuth, async (req, res, next) => {
       }
     }
 
-    // 7. Рахуємо кількість practice_events за сьогодні для кожного списку
-    // events_today > sessions_today * total → є незавершена часткова сесія
-    const { data: eventsToday, error: evErr2 } = await supabase
-      .from("practice_events")
-      .select("list_id")
-      .in("list_id", listIds)
-      .gte("created_at", todayStart.toISOString());
-
-    if (!evErr2 && eventsToday) {
-      const eventsCountMap = {};
-      for (const ev of eventsToday) {
-        eventsCountMap[ev.list_id] = (eventsCountMap[ev.list_id] || 0) + 1;
-      }
-      for (const listId of listIds) {
-        if (statuses[listId]) {
-          const evCount = eventsCountMap[listId] || 0;
-          const st = statuses[listId];
-          // partial_today = є події сьогодні ПОНАД те, що покриває кількість завершених сесій
-          st.partial_today = st.total > 0 && evCount > st.sessions_today * st.total;
-          // events_in_partial = скільки слів вже відповіли в поточній незавершеній сесії
-          st.events_in_partial = st.partial_today
-            ? evCount - st.sessions_today * st.total
-            : 0;
-        }
+    // 7. Визначаємо незавершену часткову сесію на основі reviewed_today і sessions_today
+    // Використовуємо user_word_progress.updated_at (вже завантажені вище) — надійніший
+    // сигнал, ніж practice_events (які вставляються fire-and-forget з можливою затримкою).
+    //
+    // Логіка:
+    //   reviewed_today = кількість унікальних слів, чий progress оновлено сьогодні
+    //   sessions_today × total = слів, покритих завершеними сесіями
+    //   Якщо reviewed_today > sessions_today * total → є відповіді поза завершеними сесіями
+    //   (тобто незавершена сесія в процесі)
+    for (const listId of listIds) {
+      if (statuses[listId]) {
+        const st = statuses[listId];
+        const coveredByCompleted = st.sessions_today * st.total;
+        st.partial_today = st.total > 0 && st.reviewed_today > coveredByCompleted;
+        st.events_in_partial = st.partial_today
+          ? st.reviewed_today - coveredByCompleted
+          : 0;
       }
     }
 

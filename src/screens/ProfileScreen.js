@@ -10,7 +10,7 @@
  *  6. Селектор мови (Available / Upcoming)
  */
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -24,6 +24,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth }  from "../hooks/useAuth";
 import { useI18n } from "../i18n";
@@ -54,20 +55,24 @@ export default function ProfileScreen({ navigation }) {
   const currentLang = [...AVAILABLE_LANGUAGES, ...PLANNED_LANGUAGES].find(l => l.code === locale);
 
   // Завантажуємо профіль (план + стрік + CEFR)
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const data = await fetchMyProfile();
-        if (mounted) setProfileData(data);
-      } catch {
-        if (mounted) setProfileData({ subscription_plan: "free", streak: 0, cefr_distribution: {} });
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    })();
-    return () => { mounted = false; };
+  const loadProfile = useCallback(async () => {
+    try {
+      const data = await fetchMyProfile();
+      setProfileData(data);
+    } catch {
+      setProfileData({ subscription_plan: "free", streak: 0, cefr_distribution: {} });
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  // Завантаження при монтуванні і при кожному поверненні на таб Profile
+  // (useFocusEffect спрацьовує і при першому render, тому окремий useEffect не потрібен)
+  useFocusEffect(
+    useCallback(() => {
+      loadProfile();
+    }, [loadProfile])
+  );
 
   // Витягуємо дані профілю з об'єкту user
   const profile = useMemo(() => {
