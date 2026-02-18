@@ -597,9 +597,13 @@ export default function PracticeScreen({ route, navigation }) {
             const wordCount = total > 0 ? total : (list.word_count || 0);
             const isEmpty = wordCount === 0;
 
-            // Status: done | partial | due | empty
+            // Status: done | done_partial | partial | due | empty
+            // done_partial = список повторено (due===0), але є нова незавершена сесія сьогодні
+            // (відображаємо обидва стани: "Повторено" + "Продовжити/Почати знову")
+            const sessionsToday = st?.sessions_today || 0;
             let status = 'due';
             if (isEmpty) status = 'empty';
+            else if (due === 0 && reviewed > 0 && reviewed < total) status = 'done_partial';
             else if (due === 0) status = 'done';
             else if (reviewed > 0) status = 'partial';
 
@@ -627,10 +631,51 @@ export default function PracticeScreen({ route, navigation }) {
                 {status === 'done' && (
                   <View style={[styles.statusRow, { borderTopColor: '#bbf7d0' }]}>
                     <Text style={styles.statusDone}>✅ {t('practice.status_done')}</Text>
-                    {(st?.sessions_today || 0) >= 2 && (
-                      <Text style={styles.streakBadge}>🔥 X{st.sessions_today}</Text>
-                    )}
+                    <View style={styles.statusActions}>
+                      {sessionsToday >= 2 && (
+                        <Text style={styles.streakBadge}>🔥 ×{sessionsToday}</Text>
+                      )}
+                      <TouchableOpacity
+                        onPress={() => handleListPress(list, true)}
+                        activeOpacity={0.6}
+                        hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
+                      >
+                        <Text style={styles.statusRestart}>{t('practice.restart')}</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
+                )}
+                {status === 'done_partial' && (
+                  <>
+                    <View style={[styles.statusRow, { borderTopColor: '#bbf7d0' }]}>
+                      <Text style={styles.statusDone}>✅ {t('practice.status_done')}</Text>
+                      {sessionsToday >= 2 && (
+                        <Text style={styles.streakBadge}>🔥 ×{sessionsToday}</Text>
+                      )}
+                    </View>
+                    <View style={[styles.statusRow, { borderTopWidth: 0, paddingTop: 2 }]}>
+                      <Text style={styles.statusPartial}>
+                        🔄 {t('practice.status_partial', { done: total - due, total })}
+                      </Text>
+                      <View style={styles.statusActions}>
+                        <TouchableOpacity
+                          onPress={() => handleListPress(list)}
+                          activeOpacity={0.6}
+                          hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
+                        >
+                          <Text style={styles.statusContinue}>{t('practice.continue')}</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.statusDivider}>·</Text>
+                        <TouchableOpacity
+                          onPress={() => handleListPress(list, true)}
+                          activeOpacity={0.6}
+                          hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
+                        >
+                          <Text style={styles.statusRestart}>{t('practice.restart')}</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </>
                 )}
                 {status === 'partial' && (
                   <View style={styles.statusRow}>

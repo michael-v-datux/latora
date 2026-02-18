@@ -27,6 +27,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Swipeable } from 'react-native-gesture-handler';
 import CefrBadge from '../components/CefrBadge';
 import DifficultyBar from '../components/DifficultyBar';
+import WordDifficultyBreakdown from '../components/WordDifficultyBreakdown';
 import { COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
 import {
   fetchLists,
@@ -99,6 +100,9 @@ export default function ListsScreen({ navigation }) {
   const [lifetimeSessions, setLifetimeSessions] = useState(null);
   const [listProgressMap, setListProgressMap] = useState({}); // { [listId]: { total, due } }
 
+  // Expanded word breakdown
+  const [expandedWordIds, setExpandedWordIds] = useState(() => new Set());
+
   // Bulk mode
   const [bulkMode, setBulkMode] = useState(false);
   const [selectedWordIds, setSelectedWordIds] = useState(() => new Set());
@@ -153,8 +157,12 @@ export default function ListsScreen({ navigation }) {
         id: w.id,
         original: w.original,
         translation: w.translation,
+        transcription: w.transcription ?? null,
         cefr: w.cefr_level,
+        cefr_level: w.cefr_level,
         score: w.difficulty_score ?? 50,
+        difficulty_score: w.difficulty_score ?? null,
+        example_sentence: w.example_sentence ?? null,
 
         // language pair + idioms (if present)
         source_lang: w.source_lang,
@@ -163,6 +171,15 @@ export default function ListsScreen({ navigation }) {
         translation_notes: w.translation_notes,
         translation_kind: w.translation_kind,
         part_of_speech: w.part_of_speech,
+
+        // v2 difficulty engine fields
+        base_score:       w.base_score       ?? null,
+        ai_adjustment:    w.ai_adjustment    ?? null,
+        confidence_score: w.confidence_score ?? null,
+        frequency_band:   w.frequency_band   ?? null,
+        polysemy_level:   w.polysemy_level   ?? null,
+        morph_complexity: w.morph_complexity ?? null,
+        phrase_flag:      w.phrase_flag      ?? false,
 
         // v2: word state + personal score from user_word_progress
         word_state:      w.word_state      ?? null,
@@ -188,8 +205,12 @@ export default function ListsScreen({ navigation }) {
         id: w.id,
         original: w.original,
         translation: w.translation,
+        transcription: w.transcription ?? null,
         cefr: w.cefr_level,
+        cefr_level: w.cefr_level,
         score: w.difficulty_score ?? 50,
+        difficulty_score: w.difficulty_score ?? null,
+        example_sentence: w.example_sentence ?? null,
 
         // language pair + idioms (if present)
         source_lang: w.source_lang,
@@ -198,6 +219,15 @@ export default function ListsScreen({ navigation }) {
         translation_notes: w.translation_notes,
         translation_kind: w.translation_kind,
         part_of_speech: w.part_of_speech,
+
+        // v2 difficulty engine fields
+        base_score:       w.base_score       ?? null,
+        ai_adjustment:    w.ai_adjustment    ?? null,
+        confidence_score: w.confidence_score ?? null,
+        frequency_band:   w.frequency_band   ?? null,
+        polysemy_level:   w.polysemy_level   ?? null,
+        morph_complexity: w.morph_complexity ?? null,
+        phrase_flag:      w.phrase_flag      ?? false,
 
         // v2: word state + personal score from user_word_progress
         word_state:      w.word_state      ?? null,
@@ -477,118 +507,130 @@ export default function ListsScreen({ navigation }) {
               )}
               renderItem={({ item }) => {
                 const checked = selectedWordIds.has(item.id);
+                const isExpanded = expandedWordIds.has(item.id);
+                const hasV2Data = item.base_score != null;
+
+                const toggleExpand = () => {
+                  setExpandedWordIds(prev => {
+                    const next = new Set(prev);
+                    if (next.has(item.id)) next.delete(item.id);
+                    else next.add(item.id);
+                    return next;
+                  });
+                };
 
                 const content = (
-                  <TouchableOpacity
-                    activeOpacity={0.85}
-                    onPress={() => {
-                      if (bulkMode) toggleWordSelected(item.id);
-                    }}
-                    style={styles.wordItem}
-                  >
-                    {bulkMode && (
-                      <View style={styles.checkboxWrap}>
-                        <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
-                          {checked && <Ionicons name="checkmark" size={14} color={COLORS.surface} />}
+                  <View style={styles.wordItem}>
+                    {/* Основний рядок слова */}
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => { if (bulkMode) toggleWordSelected(item.id); }}
+                      style={styles.wordRow}
+                    >
+                      {bulkMode && (
+                        <View style={styles.checkboxWrap}>
+                          <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
+                            {checked && <Ionicons name="checkmark" size={14} color={COLORS.surface} />}
+                          </View>
                         </View>
-                      </View>
-                    )}
+                      )}
 
-                    <View style={styles.wordLeft}>
-                      <View style={styles.wordHeader}>
-                        <Text style={styles.wordOriginal}>{item.original}</Text>
-                        <CefrBadge level={item.cefr} small />
-                        {item.word_state && item.word_state !== 'new' && (() => {
-                          const STATE_COLORS = {
-                            learning:    { color: '#2563eb', bg: '#eff6ff' },
-                            stabilizing: { color: '#ca8a04', bg: '#fefce8' },
-                            mastered:    { color: '#16a34a', bg: '#f0fdf4' },
-                            decaying:    { color: '#dc2626', bg: '#fef2f2' },
-                          };
-                          const sc = STATE_COLORS[item.word_state];
-                          if (!sc) return null;
+                      <View style={styles.wordLeft}>
+                        <View style={styles.wordHeader}>
+                          <Text style={styles.wordOriginal}>{item.original}</Text>
+                          <CefrBadge level={item.cefr} small />
+                          {item.word_state && item.word_state !== 'new' && (() => {
+                            const STATE_COLORS = {
+                              learning:    { color: '#2563eb', bg: '#eff6ff' },
+                              stabilizing: { color: '#ca8a04', bg: '#fefce8' },
+                              mastered:    { color: '#16a34a', bg: '#f0fdf4' },
+                              decaying:    { color: '#dc2626', bg: '#fef2f2' },
+                            };
+                            const sc = STATE_COLORS[item.word_state];
+                            if (!sc) return null;
+                            return (
+                              <View style={[styles.wordStateBadge, { backgroundColor: sc.bg }]}>
+                                <Text style={[styles.wordStateBadgeText, { color: sc.color }]}>
+                                  {t(`word.state_${item.word_state}`)}
+                                </Text>
+                              </View>
+                            );
+                          })()}
+                        </View>
+                        <Text style={styles.wordTranslation}>{item.translation}</Text>
+                        {(item.source_lang || item.target_lang) && (
+                          <Text style={styles.wordLang}>{(item.source_lang || 'EN')} → {(item.target_lang || 'UK')}</Text>
+                        )}
+
+                        {/* Idiom block */}
+                        {(() => {
+                          if (!isIdiomatic(item)) return null;
+                          const meta = parseAltTranslations(item.alt_translations);
+                          const idiomaticList = meta.idiomatic || [];
+                          const hasIdiomatic = idiomaticList.length > 0;
+                          const literalText = (meta.literal || '').toString().trim() || (hasIdiomatic ? (item.translation || '').toString().trim() : '');
+                          const hasLiteral = !!literalText;
+                          const hasAny = hasIdiomatic || hasLiteral;
+                          if (!hasAny && !item.translation_notes) return null;
+                          const view = idiomViewById[item.id] || 'idiomatic';
+                          const effectiveView = hasIdiomatic ? view : 'literal';
+                          const showToggle = hasIdiomatic && hasLiteral;
                           return (
-                            <View style={[styles.wordStateBadge, { backgroundColor: sc.bg }]}>
-                              <Text style={[styles.wordStateBadgeText, { color: sc.color }]}>
-                                {t(`word.state_${item.word_state}`)}
-                              </Text>
+                            <View style={styles.wordAltTranslations}>
+                              <View style={styles.idiomHeaderRow}>
+                                {!hasIdiomatic && <Text style={styles.wordAltLabel}>Буквально</Text>}
+                                {showToggle && (
+                                  <View style={styles.idiomToggle}>
+                                    <TouchableOpacity
+                                      onPress={() => setIdiomViewById((prev) => ({ ...prev, [item.id]: 'idiomatic' }))}
+                                      style={[styles.idiomToggleBtn, effectiveView === 'idiomatic' && styles.idiomToggleBtnActive]}
+                                    >
+                                      <Text style={[styles.idiomToggleText, effectiveView === 'idiomatic' && styles.idiomToggleTextActive]}>Idiomatic</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      onPress={() => setIdiomViewById((prev) => ({ ...prev, [item.id]: 'literal' }))}
+                                      style={[styles.idiomToggleBtn, effectiveView === 'literal' && styles.idiomToggleBtnActive]}
+                                    >
+                                      <Text style={[styles.idiomToggleText, effectiveView === 'literal' && styles.idiomToggleTextActive]}>Literal</Text>
+                                    </TouchableOpacity>
+                                  </View>
+                                )}
+                              </View>
+                              {effectiveView === 'literal' && hasLiteral && <Text style={styles.wordAltText}>• {literalText}</Text>}
+                              {effectiveView === 'idiomatic' && idiomaticList.map((txt, i) => (
+                                <Text key={`${item.id}-alt-${i}`} style={styles.wordAltText}>• {txt}</Text>
+                              ))}
+                              {!!item.translation_notes && effectiveView !== 'literal' && (
+                                <Text style={styles.wordAltNote}>{item.translation_notes}</Text>
+                              )}
                             </View>
                           );
                         })()}
                       </View>
-                      <Text style={styles.wordTranslation}>{item.translation}</Text>
-                      {(item.source_lang || item.target_lang) && (
-                        <Text style={styles.wordLang}>{(item.source_lang || 'EN')} → {(item.target_lang || 'UK')}</Text>
-                      )}
-{(() => {
-  if (!isIdiomatic(item)) return null;
 
-  const meta = parseAltTranslations(item.alt_translations);
-  const idiomaticList = meta.idiomatic || [];
-  const hasIdiomatic = idiomaticList.length > 0;
+                      <View style={styles.wordRight}>
+                        <DifficultyBar score={item.score} />
+                      </View>
+                    </TouchableOpacity>
 
-  // Backward-compatible: older records may not have literal stored.
-  // If we have idiomatic variants but no literal, fall back to current main translation as "literal".
-  const literalText = (meta.literal || '').toString().trim() || (hasIdiomatic ? (item.translation || '').toString().trim() : '');
-  const hasLiteral = !!literalText;
+                    {/* Кнопка розгортання (тільки якщо є v2 дані) */}
+                    {hasV2Data && !bulkMode && (
+                      <TouchableOpacity
+                        style={styles.expandBtn}
+                        onPress={toggleExpand}
+                        activeOpacity={0.6}
+                      >
+                        <Text style={styles.expandBtnText}>
+                          {isExpanded ? '▲ ' : '▼ '}{t('word.tap_to_expand')}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
 
-  const hasAny = hasIdiomatic || hasLiteral;
-  if (!hasAny && !item.translation_notes) return null;
-
-  const view = idiomViewById[item.id] || 'idiomatic';
-  const effectiveView = hasIdiomatic ? view : 'literal';
-  const showToggle = hasIdiomatic && hasLiteral;
-
-  return (
-    <View style={styles.wordAltTranslations}>
-      <View style={styles.idiomHeaderRow}>
-        {/* On Lists screen: show the label only when there's NO idiomatic meaning */}
-        {!hasIdiomatic && (
-          <Text style={styles.wordAltLabel}>Буквально</Text>
-        )}
-
-        {showToggle && (
-          <View style={styles.idiomToggle}>
-            <TouchableOpacity
-              onPress={() => setIdiomViewById((prev) => ({ ...prev, [item.id]: 'idiomatic' }))}
-              style={[styles.idiomToggleBtn, effectiveView === 'idiomatic' && styles.idiomToggleBtnActive]}
-            >
-              <Text style={[styles.idiomToggleText, effectiveView === 'idiomatic' && styles.idiomToggleTextActive]}>
-                Idiomatic
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setIdiomViewById((prev) => ({ ...prev, [item.id]: 'literal' }))}
-              style={[styles.idiomToggleBtn, effectiveView === 'literal' && styles.idiomToggleBtnActive]}
-            >
-              <Text style={[styles.idiomToggleText, effectiveView === 'literal' && styles.idiomToggleTextActive]}>
-                Literal
-              </Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
-
-      {effectiveView === 'literal' && hasLiteral && (
-        <Text style={styles.wordAltText}>• {literalText}</Text>
-      )}
-
-      {effectiveView === 'idiomatic' && idiomaticList.map((t, i) => (
-        <Text key={`${item.id}-alt-${i}`} style={styles.wordAltText}>• {t}</Text>
-      ))}
-
-      {/* Hide idiom explanation on Literal */}
-      {!!item.translation_notes && effectiveView !== 'literal' && (
-        <Text style={styles.wordAltNote}>{item.translation_notes}</Text>
-      )}
-    </View>
-  );
-})()}
-                    </View>
-                    <View style={styles.wordRight}>
-                      <DifficultyBar score={item.score} />
-                    </View>
-                  </TouchableOpacity>
+                    {/* Розгорнутий breakdown */}
+                    {isExpanded && hasV2Data && !bulkMode && (
+                      <WordDifficultyBreakdown word={item} />
+                    )}
+                  </View>
                 );
 
                 if (bulkMode) return content;
@@ -954,12 +996,11 @@ const styles = StyleSheet.create({
 
   // Word item
   wordItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     backgroundColor: COLORS.surface,
     borderRadius: 14,
-    padding: 14,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 8,
     marginBottom: 8,
     borderWidth: 1,
     borderColor: COLORS.borderLight,
@@ -967,6 +1008,26 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.03,
     shadowRadius: 2,
+  },
+  wordRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  expandBtn: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    backgroundColor: COLORS.background,
+  },
+  expandBtnText: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    fontWeight: '500',
   },
   checkboxWrap: { marginRight: 10 },
   checkbox: {
