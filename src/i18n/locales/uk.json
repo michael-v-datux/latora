@@ -143,7 +143,12 @@
     "streak_few": "{{count}} дні стріку",
     "streak_many": "{{count}} днів стріку",
     "streak_other": "{{count}} днів стріку",
+    "streak_section": "СТРІК",
+    "streak_empty_title": "Саме час повторити деякі слова",
+    "streak_empty_btn": "Почати повторення",
     "words_by_level": "СЛОВА ЗА РІВНЕМ",
+    "cefr_empty_title": "У вас ще немає доданих слів",
+    "cefr_empty_btn": "Перекласти і додати слово",
     "sign_out": "Вийти",
     "settings": {
       "notifications": "Сповіщення",
