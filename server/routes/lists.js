@@ -209,10 +209,11 @@ router.get("/suggest-list", requireAuth, async (req, res, next) => {
 });
 
 
-// GET /api/lists/:id — отримати один список + слова (join до words)
+// GET /api/lists/:id — отримати один список + слова (join до words + user_word_progress)
 router.get("/lists/:id", requireAuth, async (req, res, next) => {
   try {
     const supabase = req.supabase;
+    const userId = req.user.id;
 
     const { data: list, error: listError } = await supabase
       .from("lists")
@@ -234,10 +235,36 @@ router.get("/lists/:id", requireAuth, async (req, res, next) => {
       .map((lw) => lw.words)
       .filter(Boolean);
 
+    // Підтягуємо прогрес (word_state, personal_score) для цього користувача
+    const wordIds = words.map((w) => w.id);
+    let progressMap = {};
+    if (wordIds.length > 0) {
+      const { data: progress } = await supabase
+        .from("user_word_progress")
+        .select("word_id, word_state, personal_score, trend_direction, repetitions, ease_factor")
+        .eq("user_id", userId)
+        .in("word_id", wordIds);
+
+      for (const p of progress || []) {
+        progressMap[p.word_id] = p;
+      }
+    }
+
+    // Об'єднуємо word + progress поля
+    const enrichedWords = words.map((w) => {
+      const p = progressMap[w.id];
+      return {
+        ...w,
+        word_state:      p?.word_state      ?? null,
+        personal_score:  p?.personal_score  ?? null,
+        trend_direction: p?.trend_direction ?? null,
+      };
+    });
+
     return res.json({
       ...list,
-      word_count: words.length,
-      words,
+      word_count: enrichedWords.length,
+      words: enrichedWords,
     });
   } catch (error) {
     return next(error);

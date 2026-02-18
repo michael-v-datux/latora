@@ -37,6 +37,8 @@ import {
   bulkDeleteWords,
   moveWords,
 } from '../services/listsService';
+import { fetchSessionCounts, fetchListStatuses } from '../services/practiceService';
+import { useI18n } from '../i18n';
 
 // --- Helpers: normalize idiom fields coming from Supabase/HTTP ---
 // --- Helpers: normalize idiom fields coming from Supabase/HTTP ---
@@ -85,7 +87,8 @@ const isIdiomatic = (item) => {
 };
 
 
-export default function ListsScreen() {
+export default function ListsScreen({ navigation }) {
+  const { t } = useI18n();
   const [lists, setLists] = useState([]);
   const [selectedList, setSelectedList] = useState(null);
   const [selectedWords, setSelectedWords] = useState([]);
@@ -93,6 +96,8 @@ export default function ListsScreen() {
   const [loadingLists, setLoadingLists] = useState(true);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [lifetimeSessions, setLifetimeSessions] = useState(null);
+  const [listProgressMap, setListProgressMap] = useState({}); // { [listId]: { total, due } }
 
   // Bulk mode
   const [bulkMode, setBulkMode] = useState(false);
@@ -118,8 +123,12 @@ export default function ListsScreen() {
   const loadLists = async (opts = { silent: false }) => {
     if (!opts.silent) setLoadingLists(true);
     try {
-      const data = await fetchLists();
+      const [data, statusesData] = await Promise.all([
+        fetchLists(),
+        fetchListStatuses().catch(() => ({ statuses: {} })),
+      ]);
       setLists(Array.isArray(data) ? data : []);
+      setListProgressMap(statusesData?.statuses || {});
     } catch (e) {
       console.warn('Failed to fetch lists:', e?.message);
       Alert.alert('Помилка', 'Не вдалося завантажити списки');
@@ -132,10 +141,14 @@ export default function ListsScreen() {
     setSelectedList(list);
     setLoadingDetails(true);
     setSelectedWords([]);
+    setLifetimeSessions(null);
     setBulkMode(false);
     setSelectedWordIds(new Set());
     try {
-      const details = await fetchListDetails(list.id);
+      const [details, sessionData] = await Promise.all([
+        fetchListDetails(list.id),
+        fetchSessionCounts([list.id]).catch(() => ({ counts: {} })),
+      ]);
       const words = (details?.words || []).map((w) => ({
         id: w.id,
         original: w.original,
@@ -150,8 +163,14 @@ export default function ListsScreen() {
         translation_notes: w.translation_notes,
         translation_kind: w.translation_kind,
         part_of_speech: w.part_of_speech,
+
+        // v2: word state + personal score from user_word_progress
+        word_state:      w.word_state      ?? null,
+        personal_score:  w.personal_score  ?? null,
+        trend_direction: w.trend_direction ?? null,
       }));
       setSelectedWords(words);
+      setLifetimeSessions(sessionData?.counts?.[list.id] || 0);
     } catch (e) {
       console.warn('Failed to fetch list details:', e?.message);
       Alert.alert('Помилка', 'Не вдалося завантажити слова списку');
@@ -179,6 +198,11 @@ export default function ListsScreen() {
         translation_notes: w.translation_notes,
         translation_kind: w.translation_kind,
         part_of_speech: w.part_of_speech,
+
+        // v2: word state + personal score from user_word_progress
+        word_state:      w.word_state      ?? null,
+        personal_score:  w.personal_score  ?? null,
+        trend_direction: w.trend_direction ?? null,
       }));
       setSelectedWords(words);
     } catch (e) {
@@ -347,6 +371,12 @@ export default function ListsScreen() {
   if (selectedList) {
     const words = selectedWords || [];
 
+    // Баг 1 (Lists): визначаємо чи є у списку слова з різних мовних пар
+    const langPairs = new Set(
+      words.map(w => `${(w.source_lang || '').toUpperCase()}→${(w.target_lang || '').toUpperCase()}`)
+    );
+    const hasMixedLangs = langPairs.size > 1;
+
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.container}>
@@ -383,13 +413,45 @@ export default function ListsScreen() {
           {/* Header */}
           <View style={styles.listHeader}>
             <Ionicons name="folder-outline" size={24} color={COLORS.textMuted} />
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.listTitle}>{selectedList.name}</Text>
-              <Text style={styles.listSubtitle}>
-                {loadingDetails ? 'Loading…' : formatWords(words.length)}
-              </Text>
+              <View style={styles.listSubtitleRow}>
+                <Text style={styles.listSubtitle}>
+                  {loadingDetails ? 'Loading…' : formatWords(words.length)}
+                </Text>
+                {!loadingDetails && hasMixedLangs && (
+                  <View style={styles.mixedLangTag}>
+                    <Text style={styles.mixedLangTagText}>{t('lists.mixed_langs_tag')}</Text>
+                  </View>
+                )}
+              </View>
             </View>
           </View>
+
+          {/* Practice info — тільки якщо у списку є слова */}
+          {!loadingDetails && words.length > 0 && (
+            <View style={styles.practiceInfoRow}>
+              <Text style={styles.practiceInfoText}>
+                {lifetimeSessions !== null && lifetimeSessions > 0
+                  ? t('lists.reviewed_times', { count: lifetimeSessions })
+                  : t('lists.not_reviewed_yet')
+                }
+              </Text>
+              <TouchableOpacity
+                style={styles.practiceButton}
+                onPress={() => {
+                  navigation.navigate('Practice', {
+                    startListId: selectedList.id,
+                    startListName: selectedList.name,
+                  });
+                }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="fitness-outline" size={16} color="#ffffff" />
+                <Text style={styles.practiceButtonText}>{t('lists.practice_button')}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {loadingDetails ? (
             <View style={{ paddingTop: 30, alignItems: 'center' }}>
@@ -401,13 +463,17 @@ export default function ListsScreen() {
               keyExtractor={(item) => item.id}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} />}
               ListEmptyComponent={() => (
-                <View style={styles.emptyState}>
-                  <Ionicons name="add-circle-outline" size={28} color={COLORS.textMuted} />
-                  <Text style={styles.emptyTitle}>No words yet</Text>
+                <TouchableOpacity
+                  style={styles.emptyState}
+                  onPress={() => navigation.navigate('Translate')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="add-circle-outline" size={28} color={COLORS.primary} />
+                  <Text style={styles.emptyTitle}>{t('lists.empty_words')}</Text>
                   <Text style={styles.emptySubtitle}>
-                    Add words from Translate to start building your vocabulary.
+                    {t('lists.empty_words_subtitle')}
                   </Text>
-                </View>
+                </TouchableOpacity>
               )}
               renderItem={({ item }) => {
                 const checked = selectedWordIds.has(item.id);
@@ -432,6 +498,23 @@ export default function ListsScreen() {
                       <View style={styles.wordHeader}>
                         <Text style={styles.wordOriginal}>{item.original}</Text>
                         <CefrBadge level={item.cefr} small />
+                        {item.word_state && item.word_state !== 'new' && (() => {
+                          const STATE_COLORS = {
+                            learning:    { color: '#2563eb', bg: '#eff6ff' },
+                            stabilizing: { color: '#ca8a04', bg: '#fefce8' },
+                            mastered:    { color: '#16a34a', bg: '#f0fdf4' },
+                            decaying:    { color: '#dc2626', bg: '#fef2f2' },
+                          };
+                          const sc = STATE_COLORS[item.word_state];
+                          if (!sc) return null;
+                          return (
+                            <View style={[styles.wordStateBadge, { backgroundColor: sc.bg }]}>
+                              <Text style={[styles.wordStateBadgeText, { color: sc.color }]}>
+                                {t(`word.state_${item.word_state}`)}
+                              </Text>
+                            </View>
+                          );
+                        })()}
                       </View>
                       <Text style={styles.wordTranslation}>{item.translation}</Text>
                       {(item.source_lang || item.target_lang) && (
@@ -682,7 +765,10 @@ export default function ListsScreen() {
             ) : (
               <>
                 {(lists || []).map((list) => {
-                  const progress = list.progress ?? 45;
+                  const st = listProgressMap[list.id];
+                  const progress = st && st.total > 0
+                    ? Math.round(((st.total - st.due) / st.total) * 100)
+                    : 0;
 
                   const card = (
                     <TouchableOpacity
@@ -839,9 +925,32 @@ const styles = StyleSheet.create({
   backText: { fontSize: 13, color: COLORS.textMuted },
   bulkToggle: { paddingVertical: SPACING.lg, paddingHorizontal: 6 },
   bulkToggleText: { fontSize: 13, color: COLORS.textMuted },
-  listHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: SPACING.xl },
+  listHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: SPACING.sm },
   listTitle: { fontSize: 24, fontWeight: '400', color: COLORS.primary },
   listSubtitle: { fontSize: 12, color: COLORS.textMuted },
+  listSubtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  mixedLangTag: {
+    backgroundColor: '#fef3c7',
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  mixedLangTagText: { fontSize: 10, fontWeight: '700', color: '#92400e', letterSpacing: 0.2 },
+
+  // Practice info
+  practiceInfoRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: SPACING.lg, paddingVertical: SPACING.sm, paddingHorizontal: 2,
+  },
+  practiceInfoText: { fontSize: 12, color: COLORS.textMuted, flex: 1 },
+  practiceButton: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: COLORS.primary, paddingVertical: 8, paddingHorizontal: 14,
+    borderRadius: BORDER_RADIUS.md,
+  },
+  practiceButtonText: { fontSize: 13, color: '#ffffff', fontWeight: '600' },
 
   // Word item
   wordItem: {
@@ -974,6 +1083,15 @@ const styles = StyleSheet.create({
   fontSize: 12,
   fontWeight: '700',
 },
+  wordStateBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  wordStateBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
   wordAltTranslations: {
   marginTop: 12,
 },

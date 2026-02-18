@@ -132,9 +132,8 @@ async function getLanguages(type = "target") {
         { language: 'LT', name: 'Lithuanian' },
       ],
       target: [
-        { language: 'EN', name: 'English' },
-        { language: 'EN-GB', name: 'English (UK)' },
-        { language: 'EN-US', name: 'English (US)' },
+        { language: 'EN-GB', name: 'English (British)' },
+        { language: 'EN-US', name: 'English (American)' },
         { language: 'UK', name: 'Ukrainian' },
         { language: 'PL', name: 'Polish' },
         { language: 'DE', name: 'German' },

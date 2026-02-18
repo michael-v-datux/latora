@@ -23,6 +23,7 @@ const translateRoutes = require('./routes/translate');
 const listsRoutes = require('./routes/lists');
 const practiceRoutes = require('./routes/practice');
 const languagesRoutes = require('./routes/languages');
+const profileRoutes   = require('./routes/profile');
 
 const errorHandler = require("./middleware/error");
 
@@ -56,6 +57,7 @@ app.use('/api', translateRoutes);
 app.use('/api', listsRoutes);
 app.use('/api', practiceRoutes);
 app.use('/api', languagesRoutes);
+app.use('/api', profileRoutes);
 
 // === Health check (перевірка що сервер працює) ===
 app.get('/api/health', (req, res) => {

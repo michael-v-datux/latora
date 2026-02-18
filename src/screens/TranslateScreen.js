@@ -9,6 +9,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
+  Modal, Pressable,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -46,6 +47,9 @@ const [recentTarget, setRecentTarget] = useState([]);
   const [suggestedListId, setSuggestedListId] = useState(null);
 
   const [isAdded, setIsAdded] = useState(false);
+
+  // language mix confirm modal
+  const [langMixModal, setLangMixModal] = useState(null); // null | { listId, listPair, newPair }
 
   // toast
   const [toast, setToast] = useState(null);
@@ -192,17 +196,27 @@ const handleSwap = () => {
     }
   };
 
-  const handleAddToList = async (listId) => {
+  const handleAddToList = async (listId, opts = {}) => {
     try {
       if (!result?.id) return;
 
-      await addWordToList(listId, result.id);
+      await addWordToList(listId, result.id, opts);
 
       setShowModal(false);
       setIsAdded(true);
       const listName = (lists || []).find((l) => l.id === listId)?.name;
       showToast(listName ? `✓ Додано у «${listName}»` : '✓ Додано у список');
     } catch (e) {
+      // 409 LANG_MIX_CONFIRM — показуємо попап-підтвердження
+      if (e?.status === 409 && e?.data?.code === 'LANG_MIX_CONFIRM') {
+        setShowModal(false);
+        setLangMixModal({
+          listId,
+          listPair: e.data.list_pair || '',
+          newPair: e.data.new_pair || '',
+        });
+        return;
+      }
       console.warn('Add to list failed:', e?.message);
       Alert.alert('Помилка', 'Не вдалося додати слово у список');
     }
@@ -387,6 +401,46 @@ const handleSwap = () => {
             handleCreateNewList();
           }}
         />
+
+        {/* Попап підтвердження: додати слово з іншою мовною парою */}
+        <Modal
+          visible={!!langMixModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setLangMixModal(null)}
+        >
+          <Pressable style={styles.mixOverlay} onPress={() => setLangMixModal(null)}>
+            <Pressable style={styles.mixModal} onPress={() => {}}>
+              <Text style={styles.mixTitle}>{t('lists.mix_confirm_title')}</Text>
+              <Text style={styles.mixBody}>
+                {t('lists.mix_confirm_body', {
+                  listPair: langMixModal?.listPair || '',
+                  newPair: langMixModal?.newPair || '',
+                })}
+              </Text>
+              <View style={styles.mixButtons}>
+                <TouchableOpacity
+                  style={styles.mixBtnCancel}
+                  onPress={() => setLangMixModal(null)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.mixBtnCancelText}>{t('lists.mix_confirm_cancel')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.mixBtnAdd}
+                  onPress={() => {
+                    const info = langMixModal;
+                    setLangMixModal(null);
+                    handleAddToList(info.listId, { forceMix: true });
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.mixBtnAddText}>{t('lists.mix_confirm_add')}</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -581,6 +635,68 @@ inputLabel: {
   fontWeight: '700',
   marginBottom: 8,
   letterSpacing: 0.3,
+},
+
+// Language mix confirm modal
+mixOverlay: {
+  flex: 1,
+  backgroundColor: 'rgba(0,0,0,0.4)',
+  justifyContent: 'center',
+  alignItems: 'center',
+  padding: 32,
+},
+mixModal: {
+  backgroundColor: COLORS.surface,
+  borderRadius: BORDER_RADIUS.xl,
+  padding: 24,
+  width: '100%',
+  maxWidth: 320,
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: 0.15,
+  shadowRadius: 12,
+  elevation: 8,
+},
+mixTitle: {
+  fontSize: 16,
+  fontWeight: '600',
+  color: COLORS.primary,
+  marginBottom: 10,
+},
+mixBody: {
+  fontSize: 14,
+  color: COLORS.textSecondary,
+  lineHeight: 20,
+  marginBottom: 20,
+},
+mixButtons: {
+  flexDirection: 'row',
+  gap: 10,
+},
+mixBtnCancel: {
+  flex: 1,
+  paddingVertical: 12,
+  borderRadius: BORDER_RADIUS.md,
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  alignItems: 'center',
+},
+mixBtnCancelText: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: COLORS.textSecondary,
+},
+mixBtnAdd: {
+  flex: 1,
+  paddingVertical: 12,
+  borderRadius: BORDER_RADIUS.md,
+  backgroundColor: COLORS.primary,
+  alignItems: 'center',
+},
+mixBtnAddText: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#ffffff',
 },
 
 });
