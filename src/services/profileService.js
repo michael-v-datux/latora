@@ -5,7 +5,7 @@
  * - GET /profile/me — профіль + subscription_plan
  */
 
-import api from "./api";
+import api from "./apiClient";
 
 /**
  * Отримати профіль поточного користувача.
