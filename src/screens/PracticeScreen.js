@@ -436,12 +436,13 @@ export default function PracticeScreen({ route, navigation }) {
 
     // Перейти до наступного слова або завершити
     if (currentIndex + 1 >= words.length) {
-      // Логуємо завершену сесію (fire-and-forget)
+      // Логуємо завершену сесію — додаємо в pendingSubmitsRef, щоб reset() міг дочекатись
       const finalStats = { ...stats, [quality]: stats[quality] + 1 };
       const correctCount = finalStats.easy + finalStats.good;
-      logPracticeSession(selectedList.id, words.length, correctCount).catch(e => {
+      const sessionPromise = logPracticeSession(selectedList.id, words.length, correctCount).catch(e => {
         console.warn('Failed to log practice session:', e);
       });
+      pendingSubmitsRef.current.push(sessionPromise);
       setSessionsToday(prev => prev + 1);
       setScreen('results');
     } else {

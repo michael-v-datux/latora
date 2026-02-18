@@ -5,7 +5,7 @@
  * - GET /profile/me — профіль + subscription_plan + streak + cefr_distribution
  */
 
-import api from "./apiClient";
+import { api } from "./apiClient";
 
 /**
  * Отримати профіль поточного користувача.
