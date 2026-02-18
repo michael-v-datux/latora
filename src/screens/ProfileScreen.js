@@ -4,8 +4,8 @@
  * Секції (зверху вниз):
  *  1. Plan badge (Free / Pro) — з БД
  *  2. Картка профілю (аватар, ім'я, email) + кнопка Вийти
- *  3. Стрік (тимчасові дані)
- *  4. Розподіл слів за CEFR (тимчасові дані)
+ *  3. Стрік — реальний (з practice_sessions через сервер)
+ *  4. Розподіл слів за CEFR — реальний (з list_words+words через сервер)
  *  5. Налаштування (тимчасові плейсхолдери)
  *  6. Селектор мови (Available / Upcoming)
  */
@@ -31,9 +31,7 @@ import { COLORS, CEFR_COLORS, SPACING, BORDER_RADIUS } from "../utils/constants"
 import { fetchMyProfile } from "../services/profileService";
 import { AVAILABLE_LANGUAGES, PLANNED_LANGUAGES } from "../config/languages";
 
-// ─── Тимчасові дані ──────────────────────────────────────────────────────────
-const STREAK = 12;
-const LEVELS  = { A1: 0, A2: 1, B1: 1, B2: 3, C1: 2, C2: 1 };
+const CEFR_ORDER = ["A1", "A2", "B1", "B2", "C1", "C2"];
 
 const SETTINGS = [
   { key: "profile.settings.notifications", icon: "notifications-outline" },
@@ -43,29 +41,29 @@ const SETTINGS = [
 ];
 
 // ─── Компонент ───────────────────────────────────────────────────────────────
-export default function ProfileScreen() {
+export default function ProfileScreen({ navigation }) {
   const { t, locale, setLocale } = useI18n();
   const { user, signOut }        = useAuth();
   const insets                   = useSafeAreaInsets();
 
-  const [plan, setPlan]               = useState(null);
-  const [planLoading, setPlanLoading] = useState(true);
+  const [profileData, setProfileData]   = useState(null);
+  const [loading, setLoading]           = useState(true);
   const [langModalVisible, setLangModalVisible] = useState(false);
 
   // Поточна мова для відображення у рядку-тригері
   const currentLang = [...AVAILABLE_LANGUAGES, ...PLANNED_LANGUAGES].find(l => l.code === locale);
 
-  // Завантажуємо план підписки
+  // Завантажуємо профіль (план + стрік + CEFR)
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        const profile = await fetchMyProfile();
-        if (mounted) setPlan(profile.subscription_plan ?? "free");
+        const data = await fetchMyProfile();
+        if (mounted) setProfileData(data);
       } catch {
-        if (mounted) setPlan("free");
+        if (mounted) setProfileData({ subscription_plan: "free", streak: 0, cefr_distribution: {} });
       } finally {
-        if (mounted) setPlanLoading(false);
+        if (mounted) setLoading(false);
       }
     })();
     return () => { mounted = false; };
@@ -96,9 +94,16 @@ export default function ProfileScreen() {
     return { email, provider, fullName, avatarUrl };
   }, [user]);
 
-  const providerLabel = profile.provider
-    ? profile.provider.charAt(0).toUpperCase() + profile.provider.slice(1)
-    : t("profile.provider_email");
+  // Розраховуємо похідні дані
+  const plan        = profileData?.subscription_plan ?? "free";
+  const streak      = profileData?.streak ?? 0;
+  const cefrRaw     = profileData?.cefr_distribution ?? {};
+  const cefrDist    = CEFR_ORDER.reduce((acc, lvl) => {
+    acc[lvl] = cefrRaw[lvl] ?? 0;
+    return acc;
+  }, {});
+  const totalWords  = Object.values(cefrDist).reduce((s, n) => s + n, 0);
+  const maxCount    = Math.max(...Object.values(cefrDist), 1); // щоб уникнути ділення на 0
 
   // ─── Plan badge config ──────────────────────────────────────────────────
   const PLAN_CONFIG = {
@@ -131,7 +136,7 @@ export default function ProfileScreen() {
 
         {/* ── 1. Plan badge ── */}
         <View style={[styles.planCard, { backgroundColor: planCfg.bg, borderColor: planCfg.border }]}>
-          {planLoading ? (
+          {loading ? (
             <ActivityIndicator size="small" color={COLORS.textMuted} />
           ) : (
             <View style={styles.planRow}>
@@ -166,7 +171,7 @@ export default function ProfileScreen() {
               </Text>
             </View>
 
-            {/* Кнопка Вийти (замість тега провайдера) */}
+            {/* Кнопка Вийти */}
             <TouchableOpacity
               style={styles.signOutPill}
               onPress={signOut}
@@ -180,40 +185,87 @@ export default function ProfileScreen() {
 
         {/* ── 3. Стрік ── */}
         <View style={styles.streakCard}>
-          <Text style={styles.streakNumber}>{STREAK}</Text>
-          <Text style={styles.streakLabel}>{t("profile.streak", { count: STREAK })} 🔥</Text>
+          <Text style={styles.sectionLabel}>{t("profile.streak_section")}</Text>
+          {loading ? (
+            <ActivityIndicator size="small" color={COLORS.textMuted} style={{ marginTop: 8 }} />
+          ) : streak > 0 ? (
+            /* Є активний стрік */
+            <View style={styles.streakContent}>
+              <Text style={styles.streakNumber}>{streak}</Text>
+              <Text style={styles.streakLabel}>{t("profile.streak", { count: streak })} 🔥</Text>
+            </View>
+          ) : (
+            /* Стрік = 0 або згорів */
+            <View style={styles.streakEmpty}>
+              <Text style={styles.streakEmptyIcon}>🌱</Text>
+              <Text style={styles.streakEmptyText}>{t("profile.streak_empty_title")}</Text>
+              <TouchableOpacity
+                style={styles.emptyBtn}
+                onPress={() => navigation.navigate("Practice")}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.emptyBtnText}>{t("profile.streak_empty_btn")}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         {/* ── 4. Розподіл за рівнями ── */}
         <View style={styles.levelsCard}>
           <Text style={styles.sectionLabel}>{t("profile.words_by_level")}</Text>
-          <View style={styles.levelsChart}>
-            {Object.entries(LEVELS).map(([level, count]) => (
-              <View key={level} style={styles.levelColumn}>
-                <View
-                  style={[
-                    styles.levelBar,
-                    {
-                      height: Math.max(count * 20, 6),
-                      backgroundColor: (CEFR_COLORS[level] || "#94a3b8") + "15",
-                      borderColor:
-                        count > 0
-                          ? (CEFR_COLORS[level] || "#94a3b8") + "20"
-                          : COLORS.borderLight,
-                      borderWidth: 1,
-                    },
-                  ]}
-                >
-                  {count > 0 && (
-                    <Text style={[styles.levelCount, { color: CEFR_COLORS[level] }]}>
-                      {count}
-                    </Text>
-                  )}
-                </View>
-                <Text style={styles.levelLabel}>{level}</Text>
-              </View>
-            ))}
-          </View>
+          {loading ? (
+            <ActivityIndicator size="small" color={COLORS.textMuted} style={{ marginTop: 8 }} />
+          ) : totalWords === 0 ? (
+            /* Немає доданих слів */
+            <View style={styles.cefrEmpty}>
+              <Text style={styles.cefrEmptyIcon}>📚</Text>
+              <Text style={styles.cefrEmptyText}>{t("profile.cefr_empty_title")}</Text>
+              <TouchableOpacity
+                style={styles.emptyBtn}
+                onPress={() => navigation.navigate("Translate")}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.emptyBtnText}>{t("profile.cefr_empty_btn")}</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            /* Бар-чарт CEFR */
+            <View style={styles.levelsChart}>
+              {CEFR_ORDER.map((level) => {
+                const count = cefrDist[level] ?? 0;
+                // Висота відносна до максимального рівня, мін 4px
+                const barH = count > 0 ? Math.max(Math.round((count / maxCount) * 72), 8) : 4;
+                return (
+                  <View key={level} style={styles.levelColumn}>
+                    <View
+                      style={[
+                        styles.levelBar,
+                        {
+                          height: barH,
+                          backgroundColor:
+                            count > 0
+                              ? (CEFR_COLORS[level] || "#94a3b8") + "22"
+                              : COLORS.borderLight,
+                          borderColor:
+                            count > 0
+                              ? (CEFR_COLORS[level] || "#94a3b8") + "44"
+                              : COLORS.borderLight,
+                          borderWidth: 1,
+                        },
+                      ]}
+                    >
+                      {count > 0 && (
+                        <Text style={[styles.levelCount, { color: CEFR_COLORS[level] }]}>
+                          {count}
+                        </Text>
+                      )}
+                    </View>
+                    <Text style={styles.levelLabel}>{level}</Text>
+                  </View>
+                );
+              })}
+            </View>
+          )}
         </View>
 
         {/* ── 5. Налаштування ── */}
@@ -389,7 +441,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.xl,
-    alignItems: "center",
     marginBottom: 10,
     borderWidth: 1,
     borderColor: COLORS.borderLight,
@@ -398,8 +449,22 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.03,
     shadowRadius: 3,
   },
-  streakNumber: { fontSize: 42, fontWeight: "300", color: "#ea580c", fontFamily: "Courier" },
-  streakLabel:  { fontSize: 13, color: COLORS.textMuted, marginTop: 2 },
+  streakContent: { alignItems: "center", paddingTop: 4 },
+  streakNumber:  { fontSize: 42, fontWeight: "300", color: "#ea580c", fontFamily: "Courier" },
+  streakLabel:   { fontSize: 13, color: COLORS.textMuted, marginTop: 2 },
+
+  streakEmpty: { alignItems: "center", paddingTop: 8, paddingBottom: 4 },
+  streakEmptyIcon: { fontSize: 28, marginBottom: 6 },
+  streakEmptyText: { fontSize: 13, color: COLORS.textSecondary, textAlign: "center", marginBottom: 12 },
+
+  // ── Empty state кнопка (shared) ──
+  emptyBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: COLORS.primary,
+  },
+  emptyBtnText: { fontSize: 13, color: "#ffffff", fontWeight: "600" },
 
   // ── Рівні ──
   levelsCard: {
@@ -415,11 +480,15 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
   },
   sectionLabel:  { fontSize: 11, color: COLORS.textMuted, letterSpacing: 0.8, fontWeight: "500", marginBottom: 14 },
-  levelsChart:   { flexDirection: "row", gap: 8, alignItems: "flex-end", height: 80 },
-  levelColumn:   { flex: 1, alignItems: "center" },
+  levelsChart:   { flexDirection: "row", gap: 8, alignItems: "flex-end", height: 88 },
+  levelColumn:   { flex: 1, alignItems: "center", justifyContent: "flex-end" },
   levelBar:      { width: "100%", borderRadius: 6, justifyContent: "center", alignItems: "center" },
   levelCount:    { fontSize: 11, fontWeight: "700", fontFamily: "Courier" },
   levelLabel:    { fontSize: 10, color: COLORS.textMuted, fontFamily: "Courier", marginTop: 6 },
+
+  cefrEmpty: { alignItems: "center", paddingTop: 4, paddingBottom: 4 },
+  cefrEmptyIcon: { fontSize: 28, marginBottom: 6 },
+  cefrEmptyText: { fontSize: 13, color: COLORS.textSecondary, textAlign: "center", marginBottom: 12 },
 
   // ── Налаштування ──
   settingsCard: {

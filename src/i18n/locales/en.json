@@ -135,7 +135,12 @@
     "signed_in": "Signed in",
     "streak_one": "{{count}} day streak",
     "streak_other": "{{count}} day streak",
+    "streak_section": "STREAK",
+    "streak_empty_title": "Time to review some words",
+    "streak_empty_btn": "Start practice",
     "words_by_level": "WORDS BY LEVEL",
+    "cefr_empty_title": "No words added yet",
+    "cefr_empty_btn": "Translate & add a word",
     "sign_out": "Sign out",
     "settings": {
       "notifications": "Notifications",
