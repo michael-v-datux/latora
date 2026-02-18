@@ -35,6 +35,23 @@ const supabaseAdmin = require('../lib/supabase.admin.cjs');
 
 const NOT_FOUND_MSG = 'Цього слова немає у словнику';
 
+// Назви мов для повідомлень про помилку (baseLang → локалізована назва)
+const LANG_NAMES_UK = {
+  EN: 'англійською',
+  UK: 'українською',
+  DE: 'німецькою',
+  FR: 'французькою',
+  IT: 'італійською',
+  ES: 'іспанською',
+  PL: 'польською',
+  CS: 'чеською',
+  HU: 'угорською',
+  SV: 'шведською',
+  RO: 'румунською',
+  LT: 'литовською',
+  LV: 'латиською',
+  ET: 'естонською',
+};
 
 function normalizeLang(code) {
   return (code || '').trim().toUpperCase();
@@ -48,16 +65,35 @@ function normalize(s) {
   return (s || '').trim().replace(/\s+/g, ' ');
 }
 
+/** Перевіряє чи відповідає слово очікуваній мові (source_lang) */
+function detectInputScript(text) {
+  const s = normalize(text);
+  const latinCount = (s.match(/[a-zA-Z]/g) || []).length;
+  const cyrillicCount = (s.match(/[\u0400-\u04FF]/g) || []).length;
+  const total = latinCount + cyrillicCount;
+  if (total === 0) return 'unknown';
+  return latinCount > cyrillicCount ? 'latin' : 'cyrillic';
+}
+
+/** Повертає очікуваний скрипт для мови */
+function expectedScript(langCode) {
+  const base = baseLang(langCode);
+  // Кирилиця: UK (Ukrainian), RU, BG, MK, SR
+  if (['UK', 'RU', 'BG', 'MK', 'SR'].includes(base)) return 'cyrillic';
+  // Латиниця: решта підтримуваних мов
+  return 'latin';
+}
+
 function looksLikeWord(input) {
   const s = normalize(input);
   if (s.length < 2 || s.length > 40) return false;
 
   // Дозволяємо: латиниця/кирилиця + пробіли + апострофи + дефіси
-  const ok = /^[a-zA-Z\u0400-\u04FF\s'’-]+$/.test(s);
+  const ok = /^[a-zA-Z\u0400-\u04FF\s''-]+$/.test(s);
   if (!ok) return false;
 
   // Відсікаємо латиницю без голосних (типу xqzvprm)
-  const isLatin = /^[a-zA-Z\s'’-]+$/.test(s);
+  const isLatin = /^[a-zA-Z\s''-]+$/.test(s);
   if (isLatin) {
     const hasVowel = /[aeiouy]/i.test(s);
     if (!hasVowel) return false;
@@ -93,6 +129,20 @@ router.post('/translate', async (req, res) => {
       return res.json({
         error: NOT_FOUND_MSG,
         _source: 'guard',
+      });
+    }
+
+    // Баг 3: перевіряємо чи скрипт вводу відповідає source_lang
+    const inputScript = detectInputScript(cleanWordRaw);
+    const expScript = expectedScript(srcLang);
+    if (inputScript !== 'unknown' && inputScript !== expScript) {
+      const baseSrc = baseLang(srcLang);
+      const langName = LANG_NAMES_UK[baseSrc] || srcLang;
+      return res.json({
+        error: `Слово для перекладу має бути написане ${langName}`,
+        errorCode: 'WRONG_SCRIPT',
+        expectedLang: langName,
+        _source: 'script_guard',
       });
     }
 

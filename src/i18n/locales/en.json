@@ -98,7 +98,13 @@
     "reviewed_times_one": "Reviewed {{count}} time",
     "reviewed_times_other": "Reviewed {{count}} times",
     "not_reviewed_yet": "You haven't reviewed these words yet",
-    "practice_button": "Practice"
+    "word_lang_mismatch": "The word to translate must be written in {{lang}}",
+    "practice_button": "Practice",
+    "mixed_langs_tag": "Mixed languages",
+    "mix_confirm_title": "Add to this list?",
+    "mix_confirm_body": "This list contains words translated as {{listPair}}, but this word is translated as {{newPair}}. The list will have words with different language pairs.",
+    "mix_confirm_cancel": "Cancel",
+    "mix_confirm_add": "Add"
   },
   "profile": {
     "title": "Profile",

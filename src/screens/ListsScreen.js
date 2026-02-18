@@ -361,6 +361,12 @@ export default function ListsScreen({ navigation }) {
   if (selectedList) {
     const words = selectedWords || [];
 
+    // Баг 1 (Lists): визначаємо чи є у списку слова з різних мовних пар
+    const langPairs = new Set(
+      words.map(w => `${(w.source_lang || '').toUpperCase()}→${(w.target_lang || '').toUpperCase()}`)
+    );
+    const hasMixedLangs = langPairs.size > 1;
+
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.container}>
@@ -397,11 +403,18 @@ export default function ListsScreen({ navigation }) {
           {/* Header */}
           <View style={styles.listHeader}>
             <Ionicons name="folder-outline" size={24} color={COLORS.textMuted} />
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.listTitle}>{selectedList.name}</Text>
-              <Text style={styles.listSubtitle}>
-                {loadingDetails ? 'Loading…' : formatWords(words.length)}
-              </Text>
+              <View style={styles.listSubtitleRow}>
+                <Text style={styles.listSubtitle}>
+                  {loadingDetails ? 'Loading…' : formatWords(words.length)}
+                </Text>
+                {!loadingDetails && hasMixedLangs && (
+                  <View style={styles.mixedLangTag}>
+                    <Text style={styles.mixedLangTagText}>{t('lists.mixed_langs_tag')}</Text>
+                  </View>
+                )}
+              </View>
             </View>
           </View>
 
@@ -888,6 +901,16 @@ const styles = StyleSheet.create({
   listHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: SPACING.sm },
   listTitle: { fontSize: 24, fontWeight: '400', color: COLORS.primary },
   listSubtitle: { fontSize: 12, color: COLORS.textMuted },
+  listSubtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  mixedLangTag: {
+    backgroundColor: '#fef3c7',
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  mixedLangTagText: { fontSize: 10, fontWeight: '700', color: '#92400e', letterSpacing: 0.2 },
 
   // Practice info
   practiceInfoRow: {
