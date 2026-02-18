@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import CefrBadge from '../components/CefrBadge';
 import { calculateFullProgress, sortWordsForReview } from '../services/srsService';
 import { fetchLists } from '../services/listsService';
@@ -187,6 +188,40 @@ export default function PracticeScreen({ route, navigation }) {
   // ─── Усі збережені відповіді сесії (щоб дочекатися перед refresh) ───
   const pendingSubmitsRef = useRef([]);
 
+  // ─── Незавершені сесії (AsyncStorage) ───────────────────────────────────────
+  // Ключ: 'practice_pending_sessions'
+  // Значення: { [listId]: { wordsAnswered: number, total: number } }
+  //
+  // Чому AsyncStorage, а не сервер:
+  //   Лічення practice_events vs sessions×total ненадійне — після багатьох сесій
+  //   накопичуються "зайві" events і баланс ламається (показує 3/2, partial після done).
+  //   AsyncStorage — єдине джерело правди: ми самі записуємо старт і видаляємо фініш.
+  const PENDING_KEY = 'practice_pending_sessions';
+  const [pendingSessions, setPendingSessions] = useState({}); // { [listId]: { wordsAnswered, total } }
+
+  // Читаємо pending sessions з AsyncStorage при монтуванні
+  useEffect(() => {
+    AsyncStorage.getItem(PENDING_KEY)
+      .then(raw => {
+        if (raw) setPendingSessions(JSON.parse(raw));
+      })
+      .catch(() => {});
+  }, []);
+
+  // Записати/видалити pending session для конкретного списку
+  const setPendingSession = useCallback(async (listId, data) => {
+    setPendingSessions(prev => {
+      const next = { ...prev };
+      if (data === null) {
+        delete next[listId];
+      } else {
+        next[listId] = data;
+      }
+      AsyncStorage.setItem(PENDING_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+
   // ─── Завантаження даних для Home ───
   const loadHomeData = useCallback(async () => {
     try {
@@ -353,6 +388,9 @@ export default function PracticeScreen({ route, navigation }) {
       // Підготувати дані для першого слова
       prepareWord(sorted[0], level, allData.words || sorted, quizDistractors);
 
+      // Записуємо незавершену сесію в AsyncStorage — буде видалено після завершення в reset()
+      setPendingSession(selectedList.id, { wordsAnswered: 0, total: sorted.length });
+
       setLoading(false);
       setScreen('session');
     } catch (e) {
@@ -434,8 +472,10 @@ export default function PracticeScreen({ route, navigation }) {
     });
     pendingSubmitsRef.current.push(p);
 
+    const answeredSoFar = currentIndex + 1;
+
     // Перейти до наступного слова або завершити
-    if (currentIndex + 1 >= words.length) {
+    if (answeredSoFar >= words.length) {
       // Логуємо завершену сесію — додаємо в pendingSubmitsRef, щоб reset() міг дочекатись
       const finalStats = { ...stats, [quality]: stats[quality] + 1 };
       const correctCount = finalStats.easy + finalStats.good;
@@ -443,9 +483,12 @@ export default function PracticeScreen({ route, navigation }) {
         console.warn('Failed to log practice session:', e);
       });
       pendingSubmitsRef.current.push(sessionPromise);
+      // Pending session видаляється в reset() — після того як юзер натисне "Додому"
       setSessionsToday(prev => prev + 1);
       setScreen('results');
     } else {
+      // Оновлюємо лічильник відповідей в pending session
+      setPendingSession(selectedList.id, { wordsAnswered: answeredSoFar, total: words.length });
       const nextIndex = currentIndex + 1;
       setCurrentIndex(nextIndex);
       prepareWord(words[nextIndex], difficulty, allListWords, distractors);
@@ -482,7 +525,12 @@ export default function PracticeScreen({ route, navigation }) {
   };
 
   // ─── Reset ───
-  const reset = async () => {
+  const reset = async (completedListId = null) => {
+    // Якщо сесію завершено — видаляємо pending запис для цього списку
+    if (completedListId) {
+      setPendingSession(completedListId, null);
+    }
+
     setScreen('home');
     setSelectedList(null);
     setDifficulty(null);
@@ -501,7 +549,7 @@ export default function PracticeScreen({ route, navigation }) {
     setSessionId(null);
     answerStartRef.current = null;
     if (timerRef.current) clearInterval(timerRef.current);
-    // Дочекатися ВСІХ збережень сесії, щоб статуси оновились коректно
+    // Дочекатися збережень сесії перед refresh
     if (pendingSubmitsRef.current.length > 0) {
       await Promise.all(pendingSubmitsRef.current);
       pendingSubmitsRef.current = [];
@@ -599,15 +647,17 @@ export default function PracticeScreen({ route, navigation }) {
             const isEmpty = wordCount === 0;
 
             // Status: done | done_partial | partial | due | empty
-            // done_partial = список повністю повторено сьогодні (due===0) АБО раніше,
-            //                але є незавершена нова сесія сьогодні (partial_today=true)
-            // partial      = сесія в процесі (ще не повністю повторено, due>0, reviewed>0)
+            //   done_partial = due===0, але є незавершена сесія в AsyncStorage
+            //                  (юзер вийшов з сесії до завершення)
+            //   partial      = due>0, і вже є відповіді в поточному сеансі (reviewed>0)
+            //   done         = due===0, нічого незавершеного
             const sessionsToday = st?.sessions_today || 0;
-            const partialToday = st?.partial_today || false;
-            const eventsInPartial = st?.events_in_partial || 0;
+            const pendingSession = pendingSessions[list.id]; // { wordsAnswered, total } | undefined
+            const hasPending = !!pendingSession;
+            const wordsAnswered = pendingSession?.wordsAnswered || 0;
             let status = 'due';
             if (isEmpty) status = 'empty';
-            else if (due === 0 && partialToday) status = 'done_partial';
+            else if (due === 0 && hasPending) status = 'done_partial';
             else if (due === 0) status = 'done';
             else if (reviewed > 0) status = 'partial';
 
@@ -650,7 +700,7 @@ export default function PracticeScreen({ route, navigation }) {
                     </View>
                     <View style={[styles.statusRow, { borderTopWidth: 0, paddingTop: 2 }]}>
                       <Text style={styles.statusPartial}>
-                        🔄 {t('practice.status_partial', { done: eventsInPartial, total })}
+                        🔄 {t('practice.status_partial', { done: wordsAnswered, total })}
                       </Text>
                       <View style={styles.statusActions}>
                         <TouchableOpacity
@@ -826,7 +876,7 @@ export default function PracticeScreen({ route, navigation }) {
             ))}
           </View>
 
-          <TouchableOpacity style={styles.doneButton} onPress={reset} activeOpacity={0.7}>
+          <TouchableOpacity style={styles.doneButton} onPress={() => reset(selectedList?.id)} activeOpacity={0.7}>
             <Text style={styles.doneButtonText}>{t('common.done')}</Text>
           </TouchableOpacity>
         </View>
