@@ -19,7 +19,10 @@ import {
   ScrollView,
   Image,
   ActivityIndicator,
+  Modal,
+  Platform,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth }  from "../hooks/useAuth";
@@ -43,9 +46,14 @@ const SETTINGS = [
 export default function ProfileScreen() {
   const { t, locale, setLocale } = useI18n();
   const { user, signOut }        = useAuth();
+  const insets                   = useSafeAreaInsets();
 
-  const [plan, setPlan]         = useState(null);   // 'free' | 'pro'
+  const [plan, setPlan]               = useState(null);
   const [planLoading, setPlanLoading] = useState(true);
+  const [langModalVisible, setLangModalVisible] = useState(false);
+
+  // Поточна мова для відображення у рядку-тригері
+  const currentLang = [...AVAILABLE_LANGUAGES, ...PLANNED_LANGUAGES].find(l => l.code === locale);
 
   // Завантажуємо план підписки
   useEffect(() => {
@@ -228,59 +236,93 @@ export default function ProfileScreen() {
           ))}
         </View>
 
-        {/* ── 6. Селектор мови ── */}
-        <View style={styles.languageCard}>
-          {/* Заголовок секції */}
-          <View style={styles.langHeader}>
-            <Ionicons name="globe-outline" size={18} color={COLORS.textSecondary} />
-            <Text style={styles.langHeaderText}>{t("profile.language_section")}</Text>
-          </View>
-
-          {/* Available */}
-          <Text style={styles.langGroupLabel}>{t("profile.language_available")}</Text>
-          {AVAILABLE_LANGUAGES.map((lang, index) => {
-            const isActive = locale === lang.code;
-            return (
-              <TouchableOpacity
-                key={lang.code}
-                style={[
-                  styles.langItem,
-                  index < AVAILABLE_LANGUAGES.length - 1 && styles.langItemBorder,
-                  isActive && styles.langItemActive,
-                ]}
-                onPress={() => setLocale(lang.code)}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.langFlag}>{lang.flag}</Text>
-                <Text style={[styles.langLabel, isActive && styles.langLabelActive]}>
-                  {lang.label}
-                </Text>
-                {isActive && (
-                  <Ionicons name="checkmark" size={16} color={COLORS.primary} style={styles.langCheck} />
-                )}
-              </TouchableOpacity>
-            );
-          })}
-
-          {/* Upcoming */}
-          <Text style={[styles.langGroupLabel, { marginTop: 16 }]}>
-            {t("profile.language_upcoming")}
-          </Text>
-          {PLANNED_LANGUAGES.map((lang, index) => (
-            <View
-              key={lang.code}
-              style={[
-                styles.langItem,
-                styles.langItemDisabled,
-                index < PLANNED_LANGUAGES.length - 1 && styles.langItemBorder,
-              ]}
-            >
-              <Text style={[styles.langFlag, styles.langFlagDisabled]}>{lang.flag}</Text>
-              <Text style={[styles.langLabel, styles.langLabelDisabled]}>{lang.label}</Text>
-              <Text style={styles.langComingSoon}>{t("profile.language_coming_soon")}</Text>
+        {/* ── 6. Рядок-тригер мови ── */}
+        <View style={styles.settingsCard}>
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => setLangModalVisible(true)}
+            activeOpacity={0.6}
+          >
+            <View style={styles.settingLeft}>
+              <Ionicons name="globe-outline" size={20} color={COLORS.textSecondary} />
+              <Text style={styles.settingLabel}>{t("profile.language_section")}</Text>
             </View>
-          ))}
+            <View style={styles.langTriggerRight}>
+              <Text style={styles.langTriggerValue}>
+                {currentLang ? `${currentLang.flag} ${currentLang.label}` : locale}
+              </Text>
+              <Ionicons name="chevron-forward" size={16} color={COLORS.textHint} />
+            </View>
+          </TouchableOpacity>
         </View>
+
+        {/* ── Modal вибору мови ── */}
+        <Modal
+          visible={langModalVisible}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() => setLangModalVisible(false)}
+        >
+          <View style={[styles.modalContainer, { paddingBottom: insets.bottom + 16 }]}>
+            {/* Хедер модалки */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{t("profile.language_section")}</Text>
+              <TouchableOpacity onPress={() => setLangModalVisible(false)} hitSlop={8}>
+                <Ionicons name="close" size={22} color={COLORS.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {/* Available */}
+              <Text style={styles.langGroupLabel}>{t("profile.language_available")}</Text>
+              <View style={styles.langGroup}>
+                {AVAILABLE_LANGUAGES.map((lang, index) => {
+                  const isActive = locale === lang.code;
+                  return (
+                    <TouchableOpacity
+                      key={lang.code}
+                      style={[
+                        styles.langItem,
+                        index < AVAILABLE_LANGUAGES.length - 1 && styles.langItemBorder,
+                      ]}
+                      onPress={() => { setLocale(lang.code); setLangModalVisible(false); }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.langFlag}>{lang.flag}</Text>
+                      <Text style={[styles.langLabel, isActive && styles.langLabelActive]}>
+                        {lang.label}
+                      </Text>
+                      {isActive && (
+                        <Ionicons name="checkmark" size={18} color={COLORS.primary} />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Upcoming */}
+              <Text style={[styles.langGroupLabel, { marginTop: 24 }]}>
+                {t("profile.language_upcoming")}
+              </Text>
+              <View style={styles.langGroup}>
+                {PLANNED_LANGUAGES.map((lang, index) => (
+                  <View
+                    key={lang.code}
+                    style={[
+                      styles.langItem,
+                      styles.langItemDisabled,
+                      index < PLANNED_LANGUAGES.length - 1 && styles.langItemBorder,
+                    ]}
+                  >
+                    <Text style={styles.langFlag}>{lang.flag}</Text>
+                    <Text style={[styles.langLabel, styles.langLabelDisabled]}>{lang.label}</Text>
+                    <Text style={styles.langComingSoon}>{t("profile.language_coming_soon")}</Text>
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+          </View>
+        </Modal>
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -397,66 +439,73 @@ const styles = StyleSheet.create({
   settingLeft:   { flexDirection: "row", alignItems: "center", gap: 12 },
   settingLabel:  { fontSize: 14, color: COLORS.textSecondary },
 
-  // ── Мова ──
-  languageCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: BORDER_RADIUS.lg,
-    padding: SPACING.xl,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 3,
-  },
-  langHeader: {
+  // ── Тригер мови (правий бік рядка) ──
+  langTriggerRight: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    marginBottom: 16,
+    gap: 6,
   },
-  langHeaderText: {
-    fontSize: 15,
+  langTriggerValue: {
+    fontSize: 14,
+    color: COLORS.textMuted,
+  },
+
+  // ── Modal ──
+  modalContainer: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+    paddingHorizontal: SPACING.xl,
+    paddingTop: SPACING.xl,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 24,
+  },
+  modalTitle: {
+    fontSize: 18,
     fontWeight: "600",
-    color: COLORS.textSecondary,
+    color: COLORS.primary,
   },
   langGroupLabel: {
     fontSize: 11,
     color: COLORS.textMuted,
     fontWeight: "500",
     letterSpacing: 0.8,
-    marginBottom: 4,
+    marginBottom: 6,
+  },
+  langGroup: {
+    backgroundColor: COLORS.surface,
+    borderRadius: BORDER_RADIUS.lg,
+    paddingHorizontal: SPACING.xl,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
   },
   langItem: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 11,
+    paddingVertical: 13,
     gap: 12,
   },
   langItemBorder: {
     borderBottomWidth: 1,
     borderBottomColor: COLORS.borderLight,
   },
-  langItemActive: {
-    // Активний рядок — без окремого фону, лише чекмарк
-  },
   langItemDisabled: {
-    opacity: 0.45,
+    opacity: 0.4,
   },
-  langFlag:         { fontSize: 20 },
-  langFlagDisabled: {},
+  langFlag: { fontSize: 20 },
   langLabel: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 15,
     color: COLORS.textSecondary,
     fontWeight: "400",
   },
   langLabelActive:   { color: COLORS.primary, fontWeight: "600" },
   langLabelDisabled: { color: COLORS.textMuted },
-  langCheck:         { marginLeft: "auto" },
   langComingSoon: {
-    fontSize: 11,
+    fontSize: 12,
     color: COLORS.textHint,
     fontStyle: "italic",
   },
