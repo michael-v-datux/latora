@@ -136,14 +136,22 @@
     "streak_one": "{{count}} day streak",
     "streak_other": "{{count}} day streak",
     "words_by_level": "WORDS BY LEVEL",
-    "language": "Language",
     "sign_out": "Sign out",
     "settings": {
       "notifications": "Notifications",
       "export": "Export data",
       "language_pair": "Language pair",
       "about": "About LexiLevel"
-    }
+    },
+    "plan_free": "Free",
+    "plan_pro": "Pro",
+    "plan_free_emoji": "🧩",
+    "plan_pro_emoji": "⭐",
+    "plan_label": "Plan",
+    "language_section": "App language",
+    "language_available": "AVAILABLE",
+    "language_upcoming": "UPCOMING",
+    "language_coming_soon": "Coming soon"
   },
   "practice": {
     "title": "Practice",

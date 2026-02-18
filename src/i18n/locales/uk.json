@@ -144,14 +144,22 @@
     "streak_many": "{{count}} днів стріку",
     "streak_other": "{{count}} днів стріку",
     "words_by_level": "СЛОВА ЗА РІВНЕМ",
-    "language": "Мова інтерфейсу",
     "sign_out": "Вийти",
     "settings": {
       "notifications": "Сповіщення",
       "export": "Експорт даних",
       "language_pair": "Пара мов",
       "about": "Про LexiLevel"
-    }
+    },
+    "plan_free": "Free",
+    "plan_pro": "Pro",
+    "plan_free_emoji": "🧩",
+    "plan_pro_emoji": "⭐",
+    "plan_label": "Підписка",
+    "language_section": "Мова додатку",
+    "language_available": "ДОСТУПНО",
+    "language_upcoming": "НЕЗАБАРОМ",
+    "language_coming_soon": "Незабаром"
   },
   "practice": {
     "title": "Повторення",
