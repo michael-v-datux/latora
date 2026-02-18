@@ -93,19 +93,29 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
     const streak = computeStreak(sessions || [], clientTz);
 
     // 3. CEFR distribution — слова у списках цього юзера
-    // Джойнимо: lists → list_words → words і групуємо за cefr_level
-    const { data: listWords, error: lwErr } = await supabase
+    // Крок 3а: знаходимо всі list_id для цього юзера
+    const { data: userLists, error: ulErr } = await supabase
       .from("lists")
-      .select("list_words(words(cefr_level))")
+      .select("id")
       .eq("user_id", userId);
 
-    if (lwErr) throw lwErr;
+    if (ulErr) throw ulErr;
 
     const cefrDist = { A1: 0, A2: 0, B1: 0, B2: 0, C1: 0, C2: 0 };
     const validLevels = new Set(Object.keys(cefrDist));
 
-    for (const list of listWords || []) {
-      for (const lw of list.list_words || []) {
+    const listIds = (userLists || []).map((l) => l.id);
+
+    if (listIds.length > 0) {
+      // Крок 3б: плаский запит list_words + words(cefr_level) — той самий патерн що в practice.js
+      const { data: lwData, error: lwErr2 } = await supabase
+        .from("list_words")
+        .select("words(cefr_level)")
+        .in("list_id", listIds);
+
+      if (lwErr2) throw lwErr2;
+
+      for (const lw of lwData || []) {
         const level = lw.words?.cefr_level;
         if (level && validLevels.has(level)) {
           cefrDist[level]++;
