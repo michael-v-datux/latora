@@ -186,52 +186,9 @@ router.get("/practice/list-statuses", requireAuth, async (req, res, next) => {
       }
     }
 
-    // 7. Визначаємо незавершену часткову сесію на основі practice_events
-    //
-    // Логіка:
-    //   events_today = загальна кількість відповідей (не унікальних слів!) сьогодні
-    //   sessions_today × total = кількість відповідей, покритих завершеними сесіями
-    //   Якщо events_today > sessions_today * total → є зайві відповіді = незавершена сесія
-    //
-    // Чому events, а не reviewed_today (unique words):
-    //   reviewed_today обмежено total (max = total), тому після 2+ сесій
-    //   sessions_today * total завжди > reviewed_today → partial ніколи не спрацьовує.
-    //   events_today зростає з кожною відповіддю і коректно відображає реальну кількість.
-    //
-    // Гарантія відсутності race condition:
-    //   practice_events тепер вставляються await (не fire-and-forget) у POST /practice/result,
-    //   тому до моменту виклику list-statuses всі події вже в БД.
-    const { data: eventsToday, error: evTodayErr } = await supabase
-      .from("practice_events")
-      .select("list_id")
-      .in("list_id", listIds)
-      .gte("created_at", todayStart.toISOString());
-
-    if (!evTodayErr && eventsToday) {
-      // Рахуємо кількість подій по кожному списку
-      const evCountMap = {};
-      for (const ev of eventsToday) {
-        evCountMap[ev.list_id] = (evCountMap[ev.list_id] || 0) + 1;
-      }
-
-      for (const listId of listIds) {
-        if (statuses[listId]) {
-          const st = statuses[listId];
-          const evCount = evCountMap[listId] || 0;
-          const coveredByCompleted = st.sessions_today * st.total;
-          st.partial_today = st.total > 0 && evCount > coveredByCompleted;
-          st.events_in_partial = st.partial_today ? evCount - coveredByCompleted : 0;
-        }
-      }
-    } else {
-      // Fallback: якщо запит не вдався — partial_today = false
-      for (const listId of listIds) {
-        if (statuses[listId]) {
-          statuses[listId].partial_today = false;
-          statuses[listId].events_in_partial = 0;
-        }
-      }
-    }
+    // partial_today не обчислюється на сервері — трекується локально на клієнті (AsyncStorage).
+    // Підхід через лічення practice_events виявився ненадійним через накопичення
+    // "зайвих" подій після багатьох сесій. Клієнт сам знає чи є незавершена сесія.
 
     return res.json({ statuses });
   } catch (error) {
@@ -441,9 +398,9 @@ router.post("/practice/result", requireAuth, async (req, res, next) => {
 
     if (error) throw error;
 
-    // ── 2. Логуємо practice_event (awaited — потрібно для коректного partial_today) ─
+    // ── 2. Логуємо practice_event (fire-and-forget, не блокуємо відповідь) ─
     const isCorrect = quality !== "forgot";
-    const { error: evErr } = await supabase
+    supabase
       .from("practice_events")
       .insert({
         user_id:       userId,
@@ -452,9 +409,10 @@ router.post("/practice/result", requireAuth, async (req, res, next) => {
         list_id:       listId,
         result:        isCorrect,
         answer_time_ms: answerTimeMs,
+      })
+      .then(({ error: evErr }) => {
+        if (evErr) console.warn("⚠️ practice_events insert failed:", evErr.message);
       });
-
-    if (evErr) console.warn("⚠️ practice_events insert failed:", evErr.message);
 
     return res.json(data);
   } catch (error) {
