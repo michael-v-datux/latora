@@ -232,26 +232,41 @@ router.get("/practice/:listId/all", requireAuth, async (req, res, next) => {
 
     if (error) throw error;
 
-    const words = (data || []).map((d) => d.words);
+    const words = (data || []).map((d) => d.words).filter(Boolean);
     const wordIds = words.map((w) => w.id);
 
-    // Якщо слів у списку мало (< 6) — підтягуємо додаткові з БД для quiz-дистракторів
+    // Баг 1 (Practice): у змішаному списку можуть бути різні мовні пари.
+    // Знаходимо унікальні пари target_lang і для кожної підтягуємо дистрактори окремо.
     let distractors = [];
     if (words.length < 6) {
       const admin = require("../lib/supabase.admin.cjs");
-      // Беремо випадкові слова тієї ж мовної пари, яких немає в списку
-      const sampleLang = words[0];
-      if (sampleLang) {
+
+      // Збираємо унікальні (source_lang, target_lang) пари серед слів у списку
+      const pairsMap = new Map();
+      for (const w of words) {
+        const key = `${(w.source_lang || '').toUpperCase()}|${(w.target_lang || '').toUpperCase()}`;
+        if (!pairsMap.has(key)) pairsMap.set(key, { source_lang: w.source_lang, target_lang: w.target_lang });
+      }
+
+      // Для кожної пари підтягуємо дистрактори (щоб фейки були відповідної мови)
+      const excludeIds = wordIds.length > 0 ? `(${wordIds.join(",")})` : '(null)';
+      for (const pair of pairsMap.values()) {
+        // Скільки слів потрібно для цієї пари (мінімум 2 фейки)
+        const neededForPair = Math.max(0, 6 - words.filter(
+          w => (w.target_lang || '').toUpperCase() === (pair.target_lang || '').toUpperCase()
+        ).length);
+        if (neededForPair <= 0) continue;
+
         const { data: extra, error: extraErr } = await admin
           .from("words")
-          .select("id, translation")
-          .eq("source_lang", sampleLang.source_lang)
-          .eq("target_lang", sampleLang.target_lang)
-          .not("id", "in", `(${wordIds.join(",")})`)
-          .limit(10);
+          .select("id, translation, source_lang, target_lang")
+          .eq("source_lang", pair.source_lang)
+          .eq("target_lang", pair.target_lang)
+          .not("id", "in", excludeIds)
+          .limit(Math.max(neededForPair + 2, 5));
 
         if (!extraErr && extra) {
-          distractors = extra;
+          distractors.push(...extra);
         }
       }
     }

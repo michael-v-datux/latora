@@ -104,7 +104,13 @@
     "reviewed_times_many": "Повторено {{count}} разів",
     "reviewed_times_other": "Повторено {{count}} разів",
     "not_reviewed_yet": "Ці слова ще не повторювались",
-    "practice_button": "Повторення"
+    "word_lang_mismatch": "Слово для перекладу має бути написане {{lang}}",
+    "practice_button": "Повторення",
+    "mixed_langs_tag": "Різні мови",
+    "mix_confirm_title": "Додати до цього списку?",
+    "mix_confirm_body": "Список містить слова з перекладом {{listPair}}, а це слово перекладено з {{newPair}}. У списку будуть слова з різними мовними парами.",
+    "mix_confirm_cancel": "Скасувати",
+    "mix_confirm_add": "Додати"
   },
   "profile": {
     "title": "Профіль",

@@ -15,6 +15,7 @@ import {
   ActivityIndicator, AppState, Animated, Modal, Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import CefrBadge from '../components/CefrBadge';
 import { calculateNextReview, sortWordsForReview } from '../services/srsService';
 import { fetchLists } from '../services/listsService';
@@ -81,19 +82,44 @@ function shuffle(arr) {
   return a;
 }
 
-/** Згенерувати 3 варіанти (1 правильний + 2 фейкових) */
+/** Згенерувати 3 варіанти (1 правильний + 2 фейкових)
+ *
+ * Баг 1 (Practice): фейкові варіанти ОБОВ'ЯЗКОВО мають мати той самий target_lang
+ * що і правильна відповідь, інакше у змішаному списку варіанти будуть різними мовами.
+ */
 function generateOptions(correctWord, allWords, distractors = []) {
-  // Спочатку пробуємо взяти з того ж списку
-  const others = allWords.filter(w => w.id !== correctWord.id && w.translation);
-  const fakes = shuffle(others).slice(0, 2).map(w => w.translation);
-  // Якщо мало слів у списку — беремо з дистракторів (інші слова тієї ж мовної пари)
+  const targetLang = (correctWord.target_lang || '').toUpperCase();
+
+  // Спочатку пробуємо взяти з того ж списку — ТІЛЬКИ слова з тим самим target_lang
+  const sameTargetPool = allWords.filter(
+    w => w.id !== correctWord.id && w.translation &&
+    (w.target_lang || '').toUpperCase() === targetLang
+  );
+  const fakes = shuffle(sameTargetPool).slice(0, 2).map(w => w.translation);
+
+  // Якщо мало слів — беремо з дистракторів з тим самим target_lang
   if (fakes.length < 2 && distractors.length > 0) {
     const extraFakes = shuffle(distractors)
-      .filter(d => d.translation !== correctWord.translation && !fakes.includes(d.translation))
+      .filter(d =>
+        d.translation !== correctWord.translation &&
+        !fakes.includes(d.translation) &&
+        (d.target_lang || '').toUpperCase() === targetLang
+      )
       .slice(0, 2 - fakes.length)
       .map(d => d.translation);
     fakes.push(...extraFakes);
   }
+
+  // Якщо і після дистракторів не вистачає — fallback: брати будь-які з distractors
+  // (краще ніж '...' / '???'), але лише якщо нема іншого варіанту
+  if (fakes.length < 2 && distractors.length > 0) {
+    const anyFakes = shuffle(distractors)
+      .filter(d => d.translation !== correctWord.translation && !fakes.includes(d.translation))
+      .slice(0, 2 - fakes.length)
+      .map(d => d.translation);
+    fakes.push(...anyFakes);
+  }
+
   // Крайній fallback — не повинен спрацьовувати якщо в БД є слова
   while (fakes.length < 2) {
     fakes.push(fakes.length === 0 ? '...' : '???');
@@ -177,6 +203,16 @@ export default function PracticeScreen({ route, navigation }) {
     loadHomeData();
   }, [loadHomeData]);
 
+  // ─── Оновлення при фокусі на табі (Баг 4: щоб підтягувались нові слова зі списків) ───
+  useFocusEffect(
+    useCallback(() => {
+      // Оновлюємо тільки якщо на головному екрані (не під час сесії)
+      if (screen === 'home') {
+        loadHomeData();
+      }
+    }, [screen, loadHomeData])
+  );
+
   // ─── Автооновлення при настанні нового дня (опівніч) + при поверненні в додаток ───
   const lastLoadDateRef = useRef(new Date().toDateString());
 
@@ -252,13 +288,15 @@ export default function PracticeScreen({ route, navigation }) {
 
   // ─── Обробка натискання на список ───
   const handleListPress = (list, force = false) => {
+    // Баг 4: перевіряємо актуальну кількість слів — з listStatuses або з list.word_count
+    const st = listStatuses[list.id];
+    const actualCount = (st?.total || 0) > 0 ? st.total : (list.word_count || 0);
     // Якщо список порожній — shake + модалка
-    if (!list.word_count || list.word_count === 0) {
+    if (actualCount === 0) {
       triggerShake();
       setEmptyListModal(true);
       return;
     }
-    const st = listStatuses[list.id];
     const isDone = st && st.total > 0 && st.due === 0;
     setSelectedList(list);
     setForceRestart(force || isDone); // завжди force для пройдених списків
@@ -534,12 +572,14 @@ export default function PracticeScreen({ route, navigation }) {
             const total = st?.total || 0;
             const due = st?.due ?? total;
             const reviewed = st?.reviewed_today || 0;
-            const isEmpty = !list.word_count || list.word_count === 0;
+            // Баг 4: isEmpty враховує і word_count зі списків, і total зі статусів
+            // (listStatuses.total — актуальніший, бо рахується з list_words у БД)
+            const wordCount = total > 0 ? total : (list.word_count || 0);
+            const isEmpty = wordCount === 0;
 
             // Status: done | partial | due | empty
             let status = 'due';
             if (isEmpty) status = 'empty';
-            else if (total === 0) status = 'empty';
             else if (due === 0) status = 'done';
             else if (reviewed > 0) status = 'partial';
 
@@ -560,7 +600,7 @@ export default function PracticeScreen({ route, navigation }) {
                 >
                   <Text style={[styles.listEmoji, isEmpty && styles.listEmojiEmpty]}>{list.emoji || '📚'}</Text>
                   <Text style={[styles.listName, isEmpty && styles.listNameEmpty]}>{list.name}</Text>
-                  <Text style={[styles.listCount, isEmpty && styles.listCountEmpty]}>{list.word_count || 0}</Text>
+                  <Text style={[styles.listCount, isEmpty && styles.listCountEmpty]}>{wordCount}</Text>
                 </TouchableOpacity>
 
                 {/* Status badge */}
