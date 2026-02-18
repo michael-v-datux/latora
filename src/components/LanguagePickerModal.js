@@ -74,6 +74,14 @@ export default function LanguagePickerModal({
       (mode === "source" ? normalizeToSource(selectedSource) : String(selectedTarget).toUpperCase()) ===
       (mode === "source" ? normalizeToSource(code) : String(code).toUpperCase());
 
+    // Мова вже обрана на іншій стороні — приховати/задизейблити
+    const otherSide = mode === "source"
+      ? String(selectedTarget || "").toUpperCase()
+      : normalizeToSource(selectedSource);
+    const isDisabled = normalizeToSource(code) === normalizeToSource(otherSide);
+
+    if (isDisabled) return null;
+
     const isPinned = pinnedSet.has(code);
 
     return (
