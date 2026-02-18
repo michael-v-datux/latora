@@ -307,13 +307,31 @@ router.get("/practice/:listId", requireAuth, async (req, res, next) => {
 
     if (progressError) throw progressError;
 
+    // Підтягуємо останні 6 practice_events для кожного слова (для Trend Engine)
+    const { data: events } = await supabase
+      .from("practice_events")
+      .select("word_id, result, created_at")
+      .eq("user_id", req.user.id)
+      .in("word_id", wordIds)
+      .order("created_at", { ascending: false })
+      .limit(wordIds.length * 6);  // до 6 подій на слово
+
+    // Групуємо events по word_id
+    const eventsMap = {};
+    for (const ev of events || []) {
+      if (!eventsMap[ev.word_id]) eventsMap[ev.word_id] = [];
+      if (eventsMap[ev.word_id].length < 6) eventsMap[ev.word_id].push(ev);
+    }
+
     const now = new Date();
 
     const words = (data || []).map((d) => {
       const p = (progress || []).find((pr) => pr.word_id === d.word_id) || null;
+      const wordEvents = eventsMap[d.word_id] || [];
       return {
         ...d.words,
         progress: p,
+        recent_events: wordEvents,   // передаємо фронту для Trend Engine
         is_due: !p || new Date(p.next_review) <= now,
       };
     });
@@ -331,24 +349,41 @@ router.get("/practice/:listId", requireAuth, async (req, res, next) => {
   }
 });
 
-// POST /api/practice/result — зберегти результат повторення
+// POST /api/practice/result — зберегти результат повторення + practice_event
 router.post("/practice/result", requireAuth, async (req, res, next) => {
   try {
     const supabase = req.supabase;
-    const { wordId, quality, newProgress } = req.body;
+    const {
+      wordId,
+      quality,
+      newProgress,
+      sessionId   = null,   // опційний FK на practice_sessions
+      listId      = null,   // опційний FK на lists
+      answerTimeMs = null,  // час відповіді (мс)
+    } = req.body;
 
     if (!wordId || !quality || !newProgress) {
       return res.status(400).json({ error: "wordId, quality та newProgress обов'язкові" });
     }
 
+    const userId = req.user.id;
+
+    // ── 1. Upsert user_word_progress (v2: + Personal Layer поля) ───────────
     const payload = {
-      user_id: req.user.id,
-      word_id: wordId,
-      ease_factor: newProgress.ease_factor,
+      user_id:       userId,
+      word_id:       wordId,
+      ease_factor:   newProgress.ease_factor,
       interval_days: newProgress.interval_days,
-      repetitions: newProgress.repetitions,
-      next_review: newProgress.next_review,
-      last_result: quality,
+      repetitions:   newProgress.repetitions,
+      next_review:   newProgress.next_review,
+      last_result:   quality,
+      updated_at:    new Date().toISOString(),
+      // Personal Layer (розраховані на фронті через calculateFullProgress)
+      wrong_count:      newProgress.wrong_count      ?? null,
+      correct_count:    newProgress.correct_count    ?? null,
+      personal_score:   newProgress.personal_score   ?? null,
+      word_state:       newProgress.word_state        ?? null,
+      trend_direction:  newProgress.trend_direction   ?? null,
     };
 
     const { data, error } = await supabase
@@ -358,6 +393,22 @@ router.post("/practice/result", requireAuth, async (req, res, next) => {
       .single();
 
     if (error) throw error;
+
+    // ── 2. Логуємо practice_event (fire-and-forget, не блокуємо відповідь) ─
+    const isCorrect = quality !== "forgot";
+    supabase
+      .from("practice_events")
+      .insert({
+        user_id:       userId,
+        session_id:    sessionId,
+        word_id:       wordId,
+        list_id:       listId,
+        result:        isCorrect,
+        answer_time_ms: answerTimeMs,
+      })
+      .then(({ error: evErr }) => {
+        if (evErr) console.warn("⚠️ practice_events insert failed:", evErr.message);
+      });
 
     return res.json(data);
   } catch (error) {
