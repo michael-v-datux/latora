@@ -598,12 +598,15 @@ export default function PracticeScreen({ route, navigation }) {
             const isEmpty = wordCount === 0;
 
             // Status: done | done_partial | partial | due | empty
-            // done_partial = список повторено (due===0), але є нова незавершена сесія сьогодні
-            // (відображаємо обидва стани: "Повторено" + "Продовжити/Почати знову")
+            // done_partial = список повністю повторено сьогодні (due===0) АБО раніше,
+            //                але є незавершена нова сесія сьогодні (partial_today=true)
+            // partial      = сесія в процесі (ще не повністю повторено, due>0, reviewed>0)
             const sessionsToday = st?.sessions_today || 0;
+            const partialToday = st?.partial_today || false;
+            const eventsInPartial = st?.events_in_partial || 0;
             let status = 'due';
             if (isEmpty) status = 'empty';
-            else if (due === 0 && reviewed > 0 && reviewed < total) status = 'done_partial';
+            else if (due === 0 && partialToday) status = 'done_partial';
             else if (due === 0) status = 'done';
             else if (reviewed > 0) status = 'partial';
 
@@ -612,7 +615,7 @@ export default function PracticeScreen({ route, navigation }) {
                 key={list.id}
                 style={[
                   styles.listItem,
-                  status === 'done' && styles.listItemDone,
+                  (status === 'done' || status === 'done_partial') && styles.listItemDone,
                   isEmpty && styles.listItemEmpty,
                   isEmpty && { transform: [{ translateX: shakeAnim }] },
                 ]}
@@ -631,18 +634,9 @@ export default function PracticeScreen({ route, navigation }) {
                 {status === 'done' && (
                   <View style={[styles.statusRow, { borderTopColor: '#bbf7d0' }]}>
                     <Text style={styles.statusDone}>✅ {t('practice.status_done')}</Text>
-                    <View style={styles.statusActions}>
-                      {sessionsToday >= 2 && (
-                        <Text style={styles.streakBadge}>🔥 ×{sessionsToday}</Text>
-                      )}
-                      <TouchableOpacity
-                        onPress={() => handleListPress(list, true)}
-                        activeOpacity={0.6}
-                        hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
-                      >
-                        <Text style={styles.statusRestart}>{t('practice.restart')}</Text>
-                      </TouchableOpacity>
-                    </View>
+                    {sessionsToday >= 2 && (
+                      <Text style={styles.streakBadge}>🔥 ×{sessionsToday}</Text>
+                    )}
                   </View>
                 )}
                 {status === 'done_partial' && (
@@ -655,7 +649,7 @@ export default function PracticeScreen({ route, navigation }) {
                     </View>
                     <View style={[styles.statusRow, { borderTopWidth: 0, paddingTop: 2 }]}>
                       <Text style={styles.statusPartial}>
-                        🔄 {t('practice.status_partial', { done: total - due, total })}
+                        🔄 {t('practice.status_partial', { done: eventsInPartial, total })}
                       </Text>
                       <View style={styles.statusActions}>
                         <TouchableOpacity
