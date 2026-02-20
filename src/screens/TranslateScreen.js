@@ -15,12 +15,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import WordCard from '../components/WordCard';
+import AlternativeWordCard from '../components/AlternativeWordCard';
 import AddToListModal from '../components/AddToListModal';
 import LanguagePickerModal from '../components/LanguagePickerModal';
 import { translateWord, suggestList, fetchLanguages } from '../services/translateService';
 import { fetchLists, createList, addWordToList } from '../services/listsService';
+import { fetchMyProfile } from '../services/profileService';
 import { COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
 import { useI18n } from '../i18n';
+
+// Ліміти альтернатив по плану
+const MAX_ALTS = { free: 3, pro: 7 };
 
 export default function TranslateScreen() {
   const { t } = useI18n();
@@ -28,6 +33,16 @@ export default function TranslateScreen() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // Alternatives
+  const [alternatives, setAlternatives] = useState([]);   // масив word-об'єктів
+  const [selectedIds, setSelectedIds] = useState(new Set());  // Set id-шних чекбоксів
+  const [addedAltIds, setAddedAltIds] = useState(new Set()); // Set вже доданих
+  const [subscriptionPlan, setSubscriptionPlan] = useState('free');
+  // Модалка для bulk-add альтернатив
+  const [bulkAddModal, setBulkAddModal] = useState(false);
+  // Тимчасово вибране слово для single-alt-add модалки
+  const [pendingAltWord, setPendingAltWord] = useState(null);
 
 const [sourceLang, setSourceLang] = useState('EN');
 const [targetLang, setTargetLang] = useState('UK');
@@ -99,6 +114,15 @@ useEffect(() => {
   AsyncStorage.setItem('TRANSLATE_TARGET_LANG', targetLang).catch(() => {});
 }, [targetLang]);
 
+// Завантажуємо план підписки для обмеження альтернатив
+useEffect(() => {
+  fetchMyProfile()
+    .then((profile) => {
+      if (profile?.subscription_plan) setSubscriptionPlan(profile.subscription_plan);
+    })
+    .catch(() => {}); // Якщо не залогінений — лишаємо 'free'
+}, []);
+
 const togglePin = async (code) => {
   const c = String(code || '').toUpperCase();
   const next = pinnedLangs.includes(c)
@@ -152,6 +176,9 @@ const handleSwap = () => {
     setError(null);
     setResult(null);
     setIsAdded(false);
+    setAlternatives([]);
+    setSelectedIds(new Set());
+    setAddedAltIds(new Set());
 
     try {
       const data = await translateWord(query, sourceLang, targetLang);
@@ -163,6 +190,12 @@ const handleSwap = () => {
       }
 
       setResult(data);
+
+      // Альтернативи приходять у відповіді (вже обрізані до ліміту плану на сервері)
+      // Додатково обрізаємо на клієнті якщо план вже оновився
+      const planLimit = MAX_ALTS[subscriptionPlan] ?? 3;
+      const alts = Array.isArray(data?.alternatives) ? data.alternatives.slice(0, planLimit) : [];
+      setAlternatives(alts);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -247,6 +280,124 @@ const handleSwap = () => {
     } else {
       // простий fallback
       create('My Words');
+    }
+  };
+
+  // ─── Alternatives handlers ────────────────────────────────────────────────
+
+  const toggleAltSelection = (altId) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(altId)) {
+        next.delete(altId);
+      } else {
+        next.add(altId);
+      }
+      return next;
+    });
+  };
+
+  // Додати одну альтернативу (з expandedContent картки)
+  const openAltAddModal = (altWord) => {
+    // Встановлюємо тимчасовий result для AddToListModal — через pendingAlt state
+    setPendingAltWord(altWord);
+    setShowModal(true);
+    setSuggestedListName(null);
+    setSuggestedListId(null);
+
+    Promise.all([fetchLists(), suggestList(altWord.id)])
+      .then(([listsData, suggestion]) => {
+        setLists(Array.isArray(listsData) ? listsData : []);
+        if (suggestion?.suggested_list_id) {
+          setSuggestedListId(suggestion.suggested_list_id);
+          setSuggestedListName(suggestion.suggested_list_name || null);
+        }
+      })
+      .catch((e) => console.warn('openAltAddModal failed:', e?.message));
+  };
+
+  const handleAltAddToList = async (listId, opts = {}) => {
+    try {
+      const wordToAdd = pendingAltWord;
+      if (!wordToAdd?.id) return;
+
+      await addWordToList(listId, wordToAdd.id, opts);
+
+      setShowModal(false);
+      setPendingAltWord(null);
+      setAddedAltIds((prev) => new Set([...prev, wordToAdd.id]));
+      const listName = (lists || []).find((l) => l.id === listId)?.name;
+      showToast(listName ? `✓ Додано у «${listName}»` : '✓ Додано у список');
+    } catch (e) {
+      if (e?.status === 409 && e?.data?.code === 'LANG_MIX_CONFIRM') {
+        setShowModal(false);
+        setLangMixModal({
+          listId,
+          listPair: e.data.list_pair || '',
+          newPair: e.data.new_pair || '',
+          _isAlt: true,
+        });
+        return;
+      }
+      console.warn('Alt add to list failed:', e?.message);
+      Alert.alert('Помилка', 'Не вдалося додати слово у список');
+    }
+  };
+
+  // Відкрити модалку для bulk-додавання вибраних альтернатив
+  const openBulkAddModal = async () => {
+    setBulkAddModal(true);
+    setSuggestedListName(null);
+    setSuggestedListId(null);
+
+    try {
+      const listsData = await fetchLists();
+      setLists(Array.isArray(listsData) ? listsData : []);
+    } catch (e) {
+      console.warn('openBulkAddModal failed:', e?.message);
+    }
+  };
+
+  const handleBulkAddToList = async (listId, opts = {}) => {
+    setBulkAddModal(false);
+
+    const selectedAlts = alternatives.filter((a) => selectedIds.has(a.id));
+    if (selectedAlts.length === 0) return;
+
+    let added = 0;
+    let langMixEncountered = false;
+
+    for (const alt of selectedAlts) {
+      try {
+        await addWordToList(listId, alt.id, opts);
+        added++;
+        setAddedAltIds((prev) => new Set([...prev, alt.id]));
+      } catch (e) {
+        if (e?.status === 409 && e?.data?.code === 'LANG_MIX_CONFIRM') {
+          if (!langMixEncountered) {
+            // Показуємо mix confirm один раз — apply to all
+            langMixEncountered = true;
+            setLangMixModal({
+              listId,
+              listPair: e.data.list_pair || '',
+              newPair: e.data.new_pair || '',
+              _isBulk: true,
+              _bulkOpts: opts,
+            });
+          }
+          break;
+        }
+        console.warn('Bulk add failed for:', alt.id, e?.message);
+      }
+    }
+
+    if (added > 0 && !langMixEncountered) {
+      const listName = (lists || []).find((l) => l.id === listId)?.name;
+      const msg = listName
+        ? `✓ Додано ${added} слів у «${listName}»`
+        : `✓ Додано ${added} слів у список`;
+      showToast(msg);
+      setSelectedIds(new Set());
     }
   };
 
@@ -354,6 +505,45 @@ const handleSwap = () => {
             </View>
           )}
 
+          {/* ─── Alternatives section ─── */}
+          {result && alternatives.length > 0 && (
+            <View style={styles.altSection}>
+              {/* Section header */}
+              <View style={styles.altSectionHeader}>
+                <Text style={styles.altSectionTitle}>{t('translate.alternatives_title')}</Text>
+                {subscriptionPlan === 'free' && alternatives.length >= (MAX_ALTS.free) && (
+                  <View style={styles.proTeaser}>
+                    <Text style={styles.proTeaserText}>{t('translate.pro_teaser')}</Text>
+                  </View>
+                )}
+              </View>
+
+              {alternatives.map((alt) => (
+                <AlternativeWordCard
+                  key={alt.id}
+                  word={alt}
+                  isSelected={selectedIds.has(alt.id)}
+                  onToggle={() => toggleAltSelection(alt.id)}
+                  onAddToList={() => openAltAddModal(alt)}
+                  isAdded={addedAltIds.has(alt.id)}
+                />
+              ))}
+
+              {/* Bulk-add button (shows when ≥1 selected) */}
+              {selectedIds.size > 0 && (
+                <TouchableOpacity
+                  style={styles.bulkAddBtn}
+                  onPress={openBulkAddModal}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.bulkAddBtnText}>
+                    {t('translate.add_selected', { count: selectedIds.size })}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
           <View style={{ height: 40 }} />
         
 <LanguagePickerModal
@@ -393,11 +583,24 @@ const handleSwap = () => {
           visible={showModal}
           lists={lists}
           suggestedList={suggestedListName}
-          onSelect={handleAddToList}
-          onClose={() => setShowModal(false)}
+          onSelect={pendingAltWord ? handleAltAddToList : handleAddToList}
+          onClose={() => { setShowModal(false); setPendingAltWord(null); }}
           onCreateNew={() => {
-            // залишаємо модалку відкритою? на iOS prompt зручніше після закриття
             setShowModal(false);
+            setPendingAltWord(null);
+            handleCreateNewList();
+          }}
+        />
+
+        {/* Модалка bulk-add вибраних альтернатив */}
+        <AddToListModal
+          visible={bulkAddModal}
+          lists={lists}
+          suggestedList={null}
+          onSelect={handleBulkAddToList}
+          onClose={() => setBulkAddModal(false)}
+          onCreateNew={() => {
+            setBulkAddModal(false);
             handleCreateNewList();
           }}
         />
@@ -431,7 +634,14 @@ const handleSwap = () => {
                   onPress={() => {
                     const info = langMixModal;
                     setLangMixModal(null);
-                    handleAddToList(info.listId, { forceMix: true });
+                    if (info._isBulk) {
+                      // Повторюємо bulk-add з forceMix
+                      handleBulkAddToList(info.listId, { ...info._bulkOpts, forceMix: true });
+                    } else if (info._isAlt) {
+                      handleAltAddToList(info.listId, { forceMix: true });
+                    } else {
+                      handleAddToList(info.listId, { forceMix: true });
+                    }
                   }}
                   activeOpacity={0.7}
                 >
@@ -697,6 +907,49 @@ mixBtnAddText: {
   fontSize: 14,
   fontWeight: '600',
   color: '#ffffff',
+},
+
+// ─── Alternatives section ────────────────────────────────────────────────
+altSection: {
+  marginBottom: SPACING.lg,
+},
+altSectionHeader: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  marginBottom: SPACING.sm,
+},
+altSectionTitle: {
+  fontSize: 11,
+  color: COLORS.textMuted,
+  fontWeight: '700',
+  letterSpacing: 0.8,
+  textTransform: 'uppercase',
+},
+proTeaser: {
+  paddingHorizontal: 8,
+  paddingVertical: 3,
+  borderRadius: 999,
+  backgroundColor: '#fef9c3',
+  borderWidth: 1,
+  borderColor: '#fde047',
+},
+proTeaserText: {
+  fontSize: 11,
+  fontWeight: '600',
+  color: '#a16207',
+},
+bulkAddBtn: {
+  marginTop: SPACING.sm,
+  backgroundColor: COLORS.primary,
+  paddingVertical: 13,
+  borderRadius: BORDER_RADIUS.md,
+  alignItems: 'center',
+},
+bulkAddBtnText: {
+  color: '#fff',
+  fontWeight: '700',
+  fontSize: 14,
 },
 
 });
