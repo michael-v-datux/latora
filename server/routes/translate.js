@@ -15,6 +15,19 @@
 const express = require('express');
 const router = express.Router();
 
+const { translateText, getLanguages } = require('../services/deepl');
+const { assessDifficulty } = require('../services/difficulty');
+const { detectIdioms } = require('../services/idioms');
+const { generateAlternatives } = require('../services/alternatives');
+const optionalAuth = require('../middleware/optionalAuth');
+// public (anon) client: можна читати words, але писати в words після RLS — ні
+const supabase = require('../lib/supabase.server.cjs');
+// admin (service role) client: пишемо кеш words (bypasses RLS)
+const supabaseAdmin = require('../lib/supabase.admin.cjs');
+
+// Ліміти альтернатив по плану
+const MAX_ALTS = { free: 3, pro: 7 };
+
 router.get('/languages', async (req, res, next) => {
   try {
     const source = await getLanguages('source');
@@ -24,14 +37,6 @@ router.get('/languages', async (req, res, next) => {
     return next(e);
   }
 });
-
-const { translateText, getLanguages } = require('../services/deepl');
-const { assessDifficulty } = require('../services/difficulty');
-const { detectIdioms } = require('../services/idioms');
-// public (anon) client: можна читати words, але писати в words після RLS — ні
-const supabase = require('../lib/supabase.server.cjs');
-// admin (service role) client: пишемо кеш words (bypasses RLS)
-const supabaseAdmin = require('../lib/supabase.admin.cjs');
 
 const NOT_FOUND_MSG = 'Цього слова немає у словнику';
 
@@ -108,7 +113,7 @@ function isIdentityTranslation(original, translation) {
   return a === b;
 }
 
-router.post('/translate', async (req, res) => {
+router.post('/translate', optionalAuth, async (req, res) => {
   try {
     const { word, source_lang, target_lang } = req.body;
 
@@ -161,7 +166,9 @@ router.post('/translate', async (req, res) => {
 
     if (cached) {
       console.log(`📦 Кеш: "${cleanWord}" вже є в базі`);
-      return res.json({ ...cached, _source: 'cache' });
+      // Перевіряємо кешовані альтернативи
+      const alternatives = await fetchCachedAlternatives(cached.id, req.subscriptionPlan);
+      return res.json({ ...cached, alternatives, _source: 'cache' });
     }
 
     // Крок 2: Переклад через DeepL
@@ -240,24 +247,151 @@ router.post('/translate', async (req, res) => {
 
     const { data: saved, error: saveError } = await supabaseAdmin
       .from('words')
-      // upsert щоб не падати на UNIQUE(original) у випадку гонки
-      .upsert(wordData, { onConflict: 'original,source_lang,target_lang' })
+      // upsert щоб не падати на UNIQUE у випадку гонки (тепер включає translation)
+      .upsert(wordData, { onConflict: 'original,source_lang,target_lang,translation' })
       .select()
       .single();
 
     if (saveError) {
       console.warn('⚠️ Не вдалось зберегти в базу:', saveError.message);
       // Все одно повертаємо результат (навіть якщо кеш не спрацював)
-      return res.json({ ...wordData, _source: 'ai', _cacheSaved: false });
+      return res.json({ ...wordData, alternatives: [], _source: 'ai', _cacheSaved: false });
     }
 
     console.log(`✅ Збережено: "${cleanWord}" (${difficulty.cefr_level}, ${difficulty.difficulty_score}/100)`);
-    return res.json({ ...saved, _source: 'ai', _cacheSaved: true });
+
+    // ─── Генеруємо альтернативні переклади ───────────────────────────────
+    const planLimit = MAX_ALTS[req.subscriptionPlan || 'free'] ?? 3;
+    const alternatives = await generateAndCacheAlternatives(
+      saved,
+      primaryTranslation,
+      { sourceLang: srcLang, targetLang: tgtLang, maxCount: planLimit },
+    );
+
+    return res.json({ ...saved, alternatives, _source: 'ai', _cacheSaved: true });
 
   } catch (error) {
     console.error('❌ Помилка перекладу:', error.message);
     return res.status(500).json({ error: error.message });
   }
 });
+
+// ─── Хелпери для альтернативних перекладів ───────────────────────────────────
+
+/**
+ * Повертає кешовані альтернативи для слова (з word_alternatives JOIN words).
+ * Обрізає до ліміту плану.
+ */
+async function fetchCachedAlternatives(primaryWordId, subscriptionPlan) {
+  try {
+    const planLimit = MAX_ALTS[subscriptionPlan || 'free'] ?? 3;
+
+    const { data, error } = await supabase
+      .from('word_alternatives')
+      .select('alt_word_id, words!word_alternatives_alt_word_id_fkey(*)')
+      .eq('primary_word_id', primaryWordId)
+      .order('created_at', { ascending: true })
+      .limit(planLimit);
+
+    if (error || !data) return [];
+
+    return data
+      .map((row) => row.words)
+      .filter(Boolean)
+      .slice(0, planLimit);
+  } catch (e) {
+    console.warn('⚠️ fetchCachedAlternatives error:', e?.message);
+    return [];
+  }
+}
+
+/**
+ * Генерує альтернативи, зберігає в words + word_alternatives, повертає масив word-об'єктів.
+ */
+async function generateAndCacheAlternatives(primaryWord, primaryTranslation, opts) {
+  const { sourceLang, targetLang, maxCount } = opts;
+
+  try {
+    // 1. Генеруємо альтернативи через Claude Haiku
+    const alts = await generateAlternatives(primaryWord.original, primaryTranslation, {
+      sourceLang, targetLang, maxCount,
+    });
+
+    if (!alts || alts.length === 0) return [];
+
+    // 2. Для кожної альтернативи паралельно: assessDifficulty + upsert words + insert word_alternatives
+    const results = await Promise.allSettled(
+      alts.map((alt) => saveOneAlternative(primaryWord, alt, { sourceLang, targetLang }))
+    );
+
+    return results
+      .filter((r) => r.status === 'fulfilled' && r.value)
+      .map((r) => r.value);
+
+  } catch (e) {
+    console.warn('⚠️ generateAndCacheAlternatives error:', e?.message);
+    return [];
+  }
+}
+
+/**
+ * Зберігає одну альтернативу: upsert words + insert word_alternatives.
+ * Повертає збережений word-об'єкт або null при помилці.
+ */
+async function saveOneAlternative(primaryWord, alt, { sourceLang, targetLang }) {
+  try {
+    // 1. Оцінюємо складність альтернативи
+    const difficulty = await assessDifficulty(primaryWord.original, alt.translation, {
+      sourceLang, targetLang,
+    });
+
+    const altWordData = {
+      original:         primaryWord.original,
+      source_lang:      sourceLang,
+      target_lang:      targetLang,
+      translation:      alt.translation,
+      transcription:    difficulty.transcription || primaryWord.transcription,
+      difficulty_score: difficulty.difficulty_score,
+      cefr_level:       difficulty.cefr_level,
+      difficulty_factors: difficulty.factors,
+      example_sentence: alt.example_sentence || difficulty.example_sentence,
+      part_of_speech:   alt.part_of_speech || difficulty.part_of_speech,
+      base_score:       difficulty.base_score,
+      ai_adjustment:    difficulty.ai_adjustment,
+      confidence_score: difficulty.confidence_score,
+      frequency_band:   difficulty.frequency_band,
+      polysemy_level:   difficulty.polysemy_level,
+      morph_complexity: difficulty.morph_complexity,
+      phrase_flag:      difficulty.phrase_flag,
+    };
+
+    // 2. Upsert у words (той самий original, інша translation)
+    const { data: altWord, error: upsertErr } = await supabaseAdmin
+      .from('words')
+      .upsert(altWordData, { onConflict: 'original,source_lang,target_lang,translation' })
+      .select()
+      .single();
+
+    if (upsertErr || !altWord) {
+      // Якщо UNIQUE constraint не включає translation — спробуємо insert
+      console.warn('⚠️ Alt upsert error:', upsertErr?.message);
+      return null;
+    }
+
+    // 3. Зв'язуємо primary → alt у word_alternatives (ON CONFLICT DO NOTHING)
+    await supabaseAdmin
+      .from('word_alternatives')
+      .upsert(
+        { primary_word_id: primaryWord.id, alt_word_id: altWord.id },
+        { onConflict: 'primary_word_id,alt_word_id', ignoreDuplicates: true }
+      );
+
+    return altWord;
+
+  } catch (e) {
+    console.warn('⚠️ saveOneAlternative error:', e?.message);
+    return null;
+  }
+}
 
 module.exports = router;

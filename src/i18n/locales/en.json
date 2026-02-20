@@ -53,7 +53,10 @@
     "powered_by_ai": "powered by AI",
     "source_language": "Source language",
     "target_language": "Target language",
-    "lang_all": "All languages"
+    "lang_all": "All languages",
+    "alternatives_title": "OTHER MEANINGS",
+    "add_selected": "Add {{count}} selected to list",
+    "pro_teaser": "🔒 More for Pro"
   },
   "word": {
     "difficulty": "DIFFICULTY",
