@@ -27,6 +27,36 @@ import { useI18n } from '../i18n';
 // Ліміти альтернатив по плану
 const MAX_ALTS = { free: 3, pro: 7 };
 
+// ─── Ліміти вводу по плану ────────────────────────────────────────────────────
+const INPUT_LIMITS = {
+  free: { words: 6, chars: 80 },
+  pro:  { words: 8, chars: 120 },
+};
+
+/**
+ * Валідує введений текст відносно лімітів плану.
+ * Повертає { ok, code, count? }
+ */
+function validateInput(text, limits) {
+  const trimmed = text.trim().replace(/\s+/g, ' ');
+  if (!trimmed) return { ok: false, code: 'EMPTY' };
+
+  // Жорсткі евристики "схоже на речення"
+  if (/[.!?]/.test(trimmed))                           return { ok: false, code: 'SENTENCE_LIKE' };
+  if (/\n/.test(text))                                 return { ok: false, code: 'SENTENCE_LIKE' };
+  if (/;/.test(trimmed))                               return { ok: false, code: 'SENTENCE_LIKE' };
+  if ((trimmed.match(/,/g) || []).length >= 2)         return { ok: false, code: 'SENTENCE_LIKE' };
+
+  // Кількість слів
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length > limits.words) return { ok: false, code: 'TOO_LONG_WORDS', count: words.length };
+
+  // Кількість символів
+  if (trimmed.length > limits.chars) return { ok: false, code: 'TOO_LONG_CHARS', count: trimmed.length };
+
+  return { ok: true, wordCount: words.length, charCount: trimmed.length };
+}
+
 export default function TranslateScreen() {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
@@ -167,7 +197,11 @@ const handleSwap = () => {
   pushRecent('target', newTarget);
 };
 
-  const canTranslate = useMemo(() => !!query.trim(), [query]);
+  const limits       = INPUT_LIMITS[subscriptionPlan] ?? INPUT_LIMITS.free;
+  const validation   = useMemo(() => validateInput(query, limits), [query, limits]);
+  const wordCount    = useMemo(() => query.trim() ? query.trim().split(/\s+/).filter(Boolean).length : 0, [query]);
+  const charCount    = useMemo(() => query.trim().length, [query]);
+  const canTranslate = validation.ok;
 
   const handleTranslate = async () => {
     if (!query.trim()) return;
@@ -450,17 +484,22 @@ const handleSwap = () => {
 
 <View style={styles.inputCard}>
   <Text style={styles.inputLabel}>{t('translate.input_label')}</Text>
-            <View style={styles.inputWrap}>
+  <View style={styles.inputWrap}>
     <TextInput
       style={styles.input}
       value={query}
       onChangeText={setQuery}
-      placeholder={t('translate.placeholder')}
+      placeholder={t('translate.placeholder', { max: limits.words })}
       placeholderTextColor={COLORS.textHint}
       returnKeyType="search"
-      onSubmitEditing={handleTranslate}
+      onSubmitEditing={canTranslate ? handleTranslate : undefined}
       autoCorrect={false}
       autoCapitalize="none"
+      multiline={true}
+      numberOfLines={3}
+      scrollEnabled={true}
+      textAlignVertical="top"
+      blurOnSubmit={true}
     />
     {query.length > 0 && (
       <TouchableOpacity
@@ -472,6 +511,31 @@ const handleSwap = () => {
       </TouchableOpacity>
     )}
   </View>
+
+  {/* Лічильник слів/символів */}
+  {query.trim().length > 0 && (
+    <View style={styles.inputCounterRow}>
+      <Text style={[
+        styles.inputCounter,
+        !validation.ok && validation.code !== 'EMPTY' && styles.inputCounterError,
+      ]}>
+        {wordCount}/{limits.words} {t('translate.counter_words')} · {charCount}/{limits.chars} {t('translate.counter_chars')}
+      </Text>
+    </View>
+  )}
+
+  {/* Inline повідомлення про помилку валідації */}
+  {!validation.ok && validation.code !== 'EMPTY' && query.trim().length > 0 && (
+    <Text style={styles.inputValidationMsg}>
+      {validation.code === 'SENTENCE_LIKE'
+        ? t('translate.err_sentence')
+        : validation.code === 'TOO_LONG_WORDS'
+          ? t('translate.err_too_long_words', { max: limits.words })
+          : validation.code === 'TOO_LONG_CHARS'
+            ? t('translate.err_too_long_chars', { max: limits.chars })
+            : ''}
+    </Text>
+  )}
 
   <TouchableOpacity
     style={[styles.primaryBtn, !canTranslate && styles.primaryBtnDisabled]}
@@ -705,12 +769,34 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     marginTop: SPACING.sm,
-    height: 48,
+    minHeight: 48,
+    maxHeight: 90,
     fontSize: 18,
     color: COLORS.primary,
     fontWeight: '400',
     letterSpacing: -0.3,
     paddingVertical: 10,
+    textAlignVertical: 'top',
+  },
+  inputCounterRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+  },
+  inputCounter: {
+    fontSize: 11,
+    color: COLORS.textHint,
+    fontFamily: 'Courier',
+  },
+  inputCounterError: {
+    color: '#ca8a04',
+  },
+  inputValidationMsg: {
+    fontSize: 12,
+    color: '#ca8a04',
+    marginTop: 6,
+    marginBottom: 2,
+    lineHeight: 17,
   },
   inputFooter: {
     flexDirection: 'row',

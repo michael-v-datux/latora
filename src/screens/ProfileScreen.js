@@ -16,7 +16,7 @@
  *  9. Рядок-тригер мови + Modal
  */
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -131,6 +131,15 @@ function LockedProBlock({ t, label }) {
 /** Горизонтальна смуга фактора для Weakness Map з кнопкою ⓘ */
 function FactorBarLocal({ label, value, color, avgDelta, infoText }) {
   const [infoVisible, setInfoVisible] = useState(false);
+  const infoTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (infoTimerRef.current) clearTimeout(infoTimerRef.current);
+    if (infoVisible) {
+      infoTimerRef.current = setTimeout(() => setInfoVisible(false), 6000);
+    }
+    return () => { if (infoTimerRef.current) clearTimeout(infoTimerRef.current); };
+  }, [infoVisible]);
 
   // Текст-підказка: +N harder / -N easier / neutral
   const deltaLabel =
@@ -185,7 +194,16 @@ function FactorBarLocal({ label, value, color, avgDelta, infoText }) {
 /** Один бар у Vocab Growth chart з тап-tooltip */
 function GrowthBarWithTooltip({ day, barH, isToday, t }) {
   const [tooltipVisible, setTooltipVisible] = useState(false);
+  const growthTimerRef = useRef(null);
   const hasData = day.count > 0;
+
+  useEffect(() => {
+    if (growthTimerRef.current) clearTimeout(growthTimerRef.current);
+    if (tooltipVisible) {
+      growthTimerRef.current = setTimeout(() => setTooltipVisible(false), 3000);
+    }
+    return () => { if (growthTimerRef.current) clearTimeout(growthTimerRef.current); };
+  }, [tooltipVisible]);
 
   return (
     <View style={styles.growthColumn}>
@@ -224,6 +242,15 @@ function GrowthBarWithTooltip({ day, barH, isToday, t }) {
 /** Клітинка теплової карти помилок */
 function HeatmapCell({ day, t }) {
   const [tooltipVisible, setTooltipVisible] = useState(false);
+  const heatTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (heatTimerRef.current) clearTimeout(heatTimerRef.current);
+    if (tooltipVisible) {
+      heatTimerRef.current = setTimeout(() => setTooltipVisible(false), 3000);
+    }
+    return () => { if (heatTimerRef.current) clearTimeout(heatTimerRef.current); };
+  }, [tooltipVisible]);
 
   const getCellColor = () => {
     if (!day || day.total === 0) return COLORS.borderLight;
@@ -271,6 +298,22 @@ function HeatmapCell({ day, t }) {
         </View>
       )}
     </TouchableOpacity>
+  );
+}
+
+/** Порожній стан для вкладок (новий акаунт / немає даних) */
+function EmptyTabState({ icon, title, subtitle, btnLabel, onBtnPress }) {
+  return (
+    <View style={styles.emptyTabState}>
+      <Text style={styles.emptyTabIcon}>{icon}</Text>
+      <Text style={styles.emptyTabTitle}>{title}</Text>
+      {subtitle ? <Text style={styles.emptyTabSub}>{subtitle}</Text> : null}
+      {btnLabel && onBtnPress ? (
+        <TouchableOpacity style={styles.emptyBtn} onPress={onBtnPress} activeOpacity={0.7}>
+          <Text style={styles.emptyBtnText}>{btnLabel}</Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
   );
 }
 
@@ -598,6 +641,14 @@ export default function ProfileScreen({ navigation }) {
               </View>
               {loading ? (
                 <ActivityIndicator size="small" color={COLORS.textMuted} style={{ marginTop: 8 }} />
+              ) : vocabGrowth.every((d) => d.count === 0) ? (
+                <EmptyTabState
+                  icon="📈"
+                  title={t("profile.vocab_growth_empty_title")}
+                  subtitle={t("profile.vocab_growth_empty_sub")}
+                  btnLabel={t("profile.cefr_empty_btn")}
+                  onBtnPress={() => navigation.navigate("Translate")}
+                />
               ) : (
                 <>
                   <View style={styles.growthChart}>
@@ -664,17 +715,13 @@ export default function ProfileScreen({ navigation }) {
               {loading ? (
                 <ActivityIndicator size="small" color={COLORS.textMuted} style={{ marginTop: 8 }} />
               ) : reviewActivity.total_reviews === 0 ? (
-                <View style={styles.cefrEmpty}>
-                  <Text style={styles.cefrEmptyIcon}>📖</Text>
-                  <Text style={styles.cefrEmptyText}>{t("profile.streak_empty_title")}</Text>
-                  <TouchableOpacity
-                    style={styles.emptyBtn}
-                    onPress={() => navigation.navigate("Practice")}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.emptyBtnText}>{t("profile.streak_empty_btn")}</Text>
-                  </TouchableOpacity>
-                </View>
+                <EmptyTabState
+                  icon="📖"
+                  title={t("profile.activity_empty_title")}
+                  subtitle={t("profile.activity_empty_sub")}
+                  btnLabel={t("profile.streak_empty_btn")}
+                  onBtnPress={() => navigation.navigate("Practice")}
+                />
               ) : (
                 <>
                   <View style={styles.activityRow}>
@@ -742,10 +789,13 @@ export default function ProfileScreen({ navigation }) {
               {loading ? (
                 <ActivityIndicator size="small" color={COLORS.textMuted} style={{ marginTop: 8 }} />
               ) : mistakeHeatmap.every((d) => d.total === 0) ? (
-                <View style={styles.cefrEmpty}>
-                  <Text style={styles.cefrEmptyIcon}>📅</Text>
-                  <Text style={styles.cefrEmptyText}>{t("profile.heatmap_no_data")}</Text>
-                </View>
+                <EmptyTabState
+                  icon="📅"
+                  title={t("profile.heatmap_empty_title")}
+                  subtitle={t("profile.heatmap_empty_sub")}
+                  btnLabel={t("profile.streak_empty_btn")}
+                  onBtnPress={() => navigation.navigate("Practice")}
+                />
               ) : (
                 <>
                   <View style={styles.heatmapGrid}>
@@ -790,10 +840,13 @@ export default function ProfileScreen({ navigation }) {
                 {loading ? (
                   <ActivityIndicator size="small" color={COLORS.textMuted} style={{ marginTop: 8 }} />
                 ) : !difficultyOverview ? (
-                  <View style={styles.cefrEmpty}>
-                    <Text style={styles.cefrEmptyIcon}>🔍</Text>
-                    <Text style={styles.cefrEmptyText}>{t("profile.diff_no_data")}</Text>
-                  </View>
+                  <EmptyTabState
+                    icon="🔍"
+                    title={t("profile.diff_empty_title")}
+                    subtitle={t("profile.diff_empty_sub")}
+                    btnLabel={t("profile.streak_empty_btn")}
+                    onBtnPress={() => navigation.navigate("Practice")}
+                  />
                 ) : (
                   <View style={styles.diffPillsRow}>
                     <View style={styles.diffPill}>
@@ -1054,6 +1107,12 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
   },
   emptyBtnText: { fontSize: 13, color: "#ffffff", fontWeight: "600" },
+
+  // ── EmptyTabState ──
+  emptyTabState: { alignItems: "center", paddingVertical: 20, paddingHorizontal: 8, gap: 6 },
+  emptyTabIcon:  { fontSize: 32, marginBottom: 2 },
+  emptyTabTitle: { fontSize: 14, fontWeight: "600", color: COLORS.textSecondary, textAlign: "center" },
+  emptyTabSub:   { fontSize: 12, color: COLORS.textMuted, textAlign: "center", lineHeight: 18, marginBottom: 8 },
 
   // ── Word State Distribution ──
   statePillsRow: { flexDirection: "row", gap: 4 },

@@ -91,7 +91,7 @@ function expectedScript(langCode) {
 
 function looksLikeWord(input) {
   const s = normalize(input);
-  if (s.length < 2 || s.length > 40) return false;
+  if (s.length < 2 || s.length > 120) return false;
 
   // Дозволяємо: латиниця/кирилиця + пробіли + апострофи + дефіси
   const ok = /^[a-zA-Z\u0400-\u04FF\s''-]+$/.test(s);
@@ -127,6 +127,39 @@ router.post('/translate', optionalAuth, async (req, res) => {
 
     const srcLang = String(source_lang || 'EN').trim().toUpperCase();
     const tgtLang = String(target_lang || 'UK').trim().toUpperCase();
+
+    // ── Валідація "переклад як навчальна дія" ──────────────────────────────────
+    const INPUT_PLAN_LIMITS = { free: { words: 6, chars: 80 }, pro: { words: 8, chars: 120 } };
+    const userPlan   = req.subscriptionPlan || 'free';
+    const inputLimits = INPUT_PLAN_LIMITS[userPlan] || INPUT_PLAN_LIMITS.free;
+
+    // Евристика "схоже на речення" (до wordCount, щоб блокувати до кеш-перевірки)
+    const SENTENCE_CHARS_RE = /[.!?;]|\n/;
+    const commaCount = (cleanWordRaw.match(/,/g) || []).length;
+    if (SENTENCE_CHARS_RE.test(cleanWordRaw) || commaCount >= 2) {
+      return res.status(400).json({
+        error: 'Схоже на речення. Lexum перекладає слова та короткі фрази.',
+        errorCode: 'SENTENCE_LIKE',
+      });
+    }
+
+    // Кількість слів
+    const wordTokens = cleanWordRaw.split(/\s+/).filter(Boolean);
+    if (wordTokens.length > inputLimits.words) {
+      return res.status(400).json({
+        error: `Забагато слів. Скоротіть до ${inputLimits.words}.`,
+        errorCode: 'TOO_LONG_WORDS',
+      });
+    }
+
+    // Кількість символів
+    if (cleanWordRaw.length > inputLimits.chars) {
+      return res.status(400).json({
+        error: `Забагато символів. Скоротіть до ${inputLimits.chars}.`,
+        errorCode: 'TOO_LONG_CHARS',
+      });
+    }
+    // ──────────────────────────────────────────────────────────────────────────
 
     // Евристичний фільтр: не викликаємо DeepL і не кешуємо сміття
     if (!looksLikeWord(cleanWordRaw)) {

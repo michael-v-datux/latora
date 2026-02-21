@@ -24,6 +24,23 @@ import DifficultyBar from './DifficultyBar';
 import { COLORS, CEFR_COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
 import { useI18n } from '../i18n';
 
+// ─── Helper: підсвічування слова у прикладі ───────────────────────────────────
+
+/**
+ * Розбиває речення на частини, виділяючи точний збіг (case-insensitive).
+ * Повертає масив { text, highlight }.
+ */
+function highlightWord(sentence, word) {
+  if (!sentence || !word) return [{ text: sentence || '', highlight: false }];
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex   = new RegExp(`(${escaped})`, 'gi');
+  const parts   = sentence.split(regex);
+  return parts.map((part) => ({
+    text:      part,
+    highlight: part.toLowerCase() === word.toLowerCase(),
+  }));
+}
+
 // ─── Helpers: idiom fields ────────────────────────────────────────────────────
 
 const parseAltTranslations = (v) => {
@@ -357,7 +374,17 @@ export default function WordCard({ word, onAddToList, isAdded = false }) {
       {(word.example_sentence || word.example) && (
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>{t('word.example')}</Text>
-          <Text style={styles.example}>"{word.example_sentence || word.example}"</Text>
+          <Text style={styles.example}>
+            {"\""}
+            {highlightWord(word.example_sentence || word.example, word.original).map((part, i) =>
+              part.highlight ? (
+                <Text key={i} style={styles.exampleHighlight}>{part.text}</Text>
+              ) : (
+                part.text
+              )
+            )}
+            {"\""}
+          </Text>
         </View>
       )}
 
@@ -451,6 +478,12 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     fontStyle: 'italic',
     lineHeight: 22,
+  },
+  exampleHighlight: {
+    fontWeight: '700',
+    fontStyle: 'normal',
+    color: COLORS.primary,
+    textDecorationLine: 'underline',
   },
 
   // Difficulty row
