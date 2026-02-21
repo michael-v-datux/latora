@@ -136,7 +136,7 @@ function bandToScore(band) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function WordCard({ word, onAddToList, isAdded = false }) {
+export default function WordCard({ word, onAddToList, isAdded = false, onRevert = null }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [idiomView, setIdiomView] = useState('idiomatic');
@@ -238,6 +238,13 @@ export default function WordCard({ word, onAddToList, isAdded = false }) {
           {!!word.translation_notes && idiomView !== 'literal' && (
             <Text style={styles.altNote}>{word.translation_notes}</Text>
           )}
+        </View>
+      )}
+
+      {/* ─── Definition ─── */}
+      {!!word.definition && (
+        <View style={styles.definitionBox}>
+          <Text style={styles.definitionText}>{word.definition}</Text>
         </View>
       )}
 
@@ -389,16 +396,30 @@ export default function WordCard({ word, onAddToList, isAdded = false }) {
       )}
 
       {/* ─── Add to list button ─── */}
-      <TouchableOpacity
-        style={[styles.addButton, isAdded && styles.addButtonAdded]}
-        onPress={onAddToList}
-        disabled={isAdded}
-        activeOpacity={0.7}
-      >
-        <Text style={[styles.addButtonText, isAdded && styles.addButtonTextAdded]}>
-          {isAdded ? '✓ Added to list' : '+ Add to list'}
-        </Text>
-      </TouchableOpacity>
+      {isAdded ? (
+        <View style={styles.addedRow}>
+          <View style={styles.addedLabel}>
+            <Text style={styles.addedLabelText}>✓ Added to list</Text>
+          </View>
+          {onRevert && (
+            <TouchableOpacity
+              style={styles.revertBtn}
+              onPress={onRevert}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.revertBtnText}>Revert</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      ) : (
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={onAddToList}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.addButtonText}>+ Add to list</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -484,6 +505,18 @@ const styles = StyleSheet.create({
     fontStyle: 'normal',
     color: COLORS.primary,
     textDecorationLine: 'underline',
+  },
+
+  // Definition
+  definitionBox: {
+    marginBottom: SPACING.md,
+    paddingHorizontal: 2,
+  },
+  definitionText: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    lineHeight: 19,
+    fontStyle: 'italic',
   },
 
   // Difficulty row
@@ -617,17 +650,43 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 20,
   },
-  addButtonAdded: {
-    backgroundColor: '#f0fdf4',
-    borderColor: '#bbf7d0',
-  },
   addButtonText: {
     fontSize: 14,
     fontWeight: '500',
     color: COLORS.textPrimary,
   },
-  addButtonTextAdded: {
+
+  // Added state: "✓ Added to list" + "Revert"
+  addedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 20,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    backgroundColor: '#f0fdf4',
+    overflow: 'hidden',
+  },
+  addedLabel: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  addedLabelText: {
+    fontSize: 14,
+    fontWeight: '500',
     color: '#16a34a',
+  },
+  revertBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderLeftWidth: 1,
+    borderLeftColor: '#bbf7d0',
+  },
+  revertBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#dc2626',
   },
 
   // Idiom block (unchanged)

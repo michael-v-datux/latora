@@ -267,6 +267,8 @@ router.post('/translate', optionalAuth, async (req, res) => {
       phrase_flag:      difficulty.phrase_flag,
       // ─────────────────────────────────────────────────────────────
 
+      definition:       difficulty.definition,
+
       // Для ідіом: зберігаємо ідіоматичні варіанти + literal(DeepL)
       alt_translations: (idiom && idiom.is_idiom)
         ? {
@@ -389,6 +391,7 @@ async function saveOneAlternative(primaryWord, alt, { sourceLang, targetLang }) 
       difficulty_factors: difficulty.factors,
       example_sentence: alt.example_sentence || difficulty.example_sentence,
       part_of_speech:   alt.part_of_speech || difficulty.part_of_speech,
+      definition:       difficulty.definition,
       base_score:       difficulty.base_score,
       ai_adjustment:    difficulty.ai_adjustment,
       confidence_score: difficulty.confidence_score,

@@ -198,7 +198,7 @@ function parseClaudeJson(rawText) {
  * @returns {{ adjustment: number, confidence: number, reason: string,
  *             cefr_level: string, part_of_speech: string,
  *             transcription: string, example_sentence: string,
- *             polysemy_level: number }}
+ *             polysemy_level: number, definition: string }}
  */
 async function getAiAdjustment({ word, translation, sourceLang, targetLang, baseScore }) {
   const srcLabel = sourceLang || 'EN';
@@ -206,7 +206,7 @@ async function getAiAdjustment({ word, translation, sourceLang, targetLang, base
 
   const prompt = `You are an expert in language teaching for ${tgtLabel}-speaking students learning ${srcLabel}.
 
-The word "${word}" (translation: "${translation}") has a base difficulty score of ${baseScore}/100.
+The word/phrase "${word}" (translation: "${translation}") has a base difficulty score of ${baseScore}/100.
 
 Respond ONLY with a valid JSON object:
 {
@@ -217,7 +217,8 @@ Respond ONLY with a valid JSON object:
   "part_of_speech": "noun",
   "transcription": "/ˈwɜːrd/",
   "example_sentence": "A natural sentence using the word in context.",
-  "polysemy_level": 3
+  "polysemy_level": 3,
+  "definition": "A concise English-language definition of the meaning."
 }
 
 Rules:
@@ -227,7 +228,12 @@ Rules:
 - cefr_level: A1 A2 B1 B2 C1 C2
 - polysemy_level: 1(mono-semantic)–5(highly polysemous)
 - transcription: IPA format, ${srcLabel} pronunciation
-- example_sentence: in ${srcLabel}, natural usage`;
+- example_sentence: in ${srcLabel}, natural usage
+- definition: a short, clear English definition of the word/phrase/idiom meaning.
+  For single words: dictionary-style (e.g. "very silly; deserving to be laughed at").
+  For idioms/fixed expressions: explain figurative meaning (e.g. "used to describe something extremely funny").
+  For collocations/phrases: brief contextual description (e.g. "a set of reusable interface components").
+  Keep it under 120 characters. Do not include the word itself in the definition.`;
 
   const message = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
@@ -273,6 +279,7 @@ function computeConfidence({ aiConfidence, aiCefr, baseScore }) {
  *   example_sentence: string|null,
  *   part_of_speech: string|null,
  *   transcription: string|null,
+ *   definition: string|null,
  * }}
  */
 async function assessDifficulty(word, translation, opts = {}) {
@@ -315,6 +322,7 @@ async function assessDifficulty(word, translation, opts = {}) {
       example_sentence: null,
       part_of_speech:   null,
       transcription:    null,
+      definition:       null,
     };
   }
 
@@ -365,6 +373,7 @@ async function assessDifficulty(word, translation, opts = {}) {
       example_sentence: ai.example_sentence || null,
       part_of_speech:   ai.part_of_speech   || null,
       transcription:    ai.transcription     || null,
+      definition:       ai.definition        || null,
     };
   } catch (error) {
     console.error('🤖 AI adjustment failed, using deterministic result:', error.message);
@@ -382,6 +391,7 @@ async function assessDifficulty(word, translation, opts = {}) {
       example_sentence: null,
       part_of_speech:   null,
       transcription:    null,
+      definition:       null,
     };
   }
 }

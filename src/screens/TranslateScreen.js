@@ -19,13 +19,16 @@ import AlternativeWordCard from '../components/AlternativeWordCard';
 import AddToListModal from '../components/AddToListModal';
 import LanguagePickerModal from '../components/LanguagePickerModal';
 import { translateWord, suggestList, fetchLanguages } from '../services/translateService';
-import { fetchLists, createList, addWordToList } from '../services/listsService';
+import { fetchLists, createList, addWordToList, removeWordFromList } from '../services/listsService';
 import { fetchMyProfile } from '../services/profileService';
 import { COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
 import { useI18n } from '../i18n';
 
 // Ліміти альтернатив по плану
 const MAX_ALTS = { free: 3, pro: 7 };
+
+const HISTORY_KEY = 'TRANSLATE_HISTORY';
+const HISTORY_MAX = 25;
 
 // ─── Ліміти вводу по плану ────────────────────────────────────────────────────
 const INPUT_LIMITS = {
@@ -59,6 +62,11 @@ function validateInput(text, limits) {
 
 export default function TranslateScreen() {
   const { t } = useI18n();
+  const [activeTab, setActiveTab] = useState('translate'); // 'translate' | 'history'
+  const [history, setHistory] = useState([]);               // [{...wordObj, addedToListId}]
+  const [historyAddedIds, setHistoryAddedIds] = useState({}); // { wordId: listId }
+  const [pendingHistoryWord, setPendingHistoryWord] = useState(null);
+
   const [query, setQuery] = useState('');
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -92,6 +100,8 @@ const [recentTarget, setRecentTarget] = useState([]);
   const [suggestedListId, setSuggestedListId] = useState(null);
 
   const [isAdded, setIsAdded] = useState(false);
+  // Для Revert: зберігаємо listId та wordId останнього доданого основного слова
+  const [lastAddedListId, setLastAddedListId] = useState(null);
 
   // language mix confirm modal
   const [langMixModal, setLangMixModal] = useState(null); // null | { listId, listPair, newPair }
@@ -106,6 +116,20 @@ const [recentTarget, setRecentTarget] = useState([]);
     toastTimer.current = setTimeout(() => setToast(null), 2500);
   };
 
+  const saveToHistory = async (wordObj) => {
+    try {
+      const savedRaw = await AsyncStorage.getItem(HISTORY_KEY);
+      const prev = savedRaw ? JSON.parse(savedRaw) : [];
+      // Видаляємо дублікат якщо вже є (за id)
+      const filtered = prev.filter((w) => w.id !== wordObj.id);
+      const next = [wordObj, ...filtered].slice(0, HISTORY_MAX);
+      setHistory(next);
+      await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+    } catch (e) {
+      // ignore
+    }
+  };
+
   
 useEffect(() => {
   (async () => {
@@ -115,12 +139,14 @@ useEffect(() => {
       const savedPinned = await AsyncStorage.getItem('PINNED_LANGS');
       const savedRecentSource = await AsyncStorage.getItem('RECENT_SOURCE_LANGS');
       const savedRecentTarget = await AsyncStorage.getItem('RECENT_TARGET_LANGS');
+      const savedHistory = await AsyncStorage.getItem(HISTORY_KEY);
 
       if (savedSource) setSourceLang(savedSource);
       if (savedTarget) setTargetLang(savedTarget);
       if (savedPinned) setPinnedLangs(JSON.parse(savedPinned) || []);
       if (savedRecentSource) setRecentSource(JSON.parse(savedRecentSource) || []);
       if (savedRecentTarget) setRecentTarget(JSON.parse(savedRecentTarget) || []);
+      if (savedHistory) setHistory(JSON.parse(savedHistory) || []);
     } catch (e) {
       // ignore
     }
@@ -210,6 +236,7 @@ const handleSwap = () => {
     setError(null);
     setResult(null);
     setIsAdded(false);
+    setLastAddedListId(null);
     setAlternatives([]);
     setSelectedIds(new Set());
     setAddedAltIds(new Set());
@@ -224,6 +251,7 @@ const handleSwap = () => {
       }
 
       setResult(data);
+      if (data?.id) saveToHistory(data);
 
       // Альтернативи приходять у відповіді (вже обрізані до ліміту плану на сервері)
       // Додатково обрізаємо на клієнті якщо план вже оновився
@@ -271,6 +299,7 @@ const handleSwap = () => {
 
       setShowModal(false);
       setIsAdded(true);
+      setLastAddedListId(listId);
       const listName = (lists || []).find((l) => l.id === listId)?.name;
       showToast(listName ? `✓ Додано у «${listName}»` : '✓ Додано у список');
     } catch (e) {
@@ -286,6 +315,82 @@ const handleSwap = () => {
       }
       console.warn('Add to list failed:', e?.message);
       Alert.alert('Помилка', 'Не вдалося додати слово у список');
+    }
+  };
+
+  // ─── History handlers ─────────────────────────────────────────────────────
+
+  const openHistoryWordModal = (histWord) => {
+    setPendingHistoryWord(histWord);
+    setShowModal(true);
+    setSuggestedListName(null);
+    setSuggestedListId(null);
+
+    Promise.all([fetchLists(), suggestList(histWord.id)])
+      .then(([listsData, suggestion]) => {
+        setLists(Array.isArray(listsData) ? listsData : []);
+        if (suggestion?.suggested_list_id) {
+          setSuggestedListId(suggestion.suggested_list_id);
+          setSuggestedListName(suggestion.suggested_list_name || null);
+        }
+      })
+      .catch((e) => console.warn('openHistoryWordModal failed:', e?.message));
+  };
+
+  const handleHistoryAddToList = async (listId, opts = {}) => {
+    try {
+      const wordToAdd = pendingHistoryWord;
+      if (!wordToAdd?.id) return;
+
+      await addWordToList(listId, wordToAdd.id, opts);
+
+      setShowModal(false);
+      setPendingHistoryWord(null);
+      setHistoryAddedIds((prev) => ({ ...prev, [wordToAdd.id]: listId }));
+      const listName = (lists || []).find((l) => l.id === listId)?.name;
+      showToast(listName ? `✓ Додано у «${listName}»` : '✓ Додано у список');
+    } catch (e) {
+      if (e?.status === 409 && e?.data?.code === 'LANG_MIX_CONFIRM') {
+        setShowModal(false);
+        setLangMixModal({
+          listId,
+          listPair: e.data.list_pair || '',
+          newPair: e.data.new_pair || '',
+          _isHistory: true,
+        });
+        return;
+      }
+      console.warn('History add to list failed:', e?.message);
+      Alert.alert('Помилка', 'Не вдалося додати слово у список');
+    }
+  };
+
+  const handleHistoryRevert = async (histWord) => {
+    const listId = historyAddedIds[histWord.id];
+    if (!listId) return;
+    try {
+      await removeWordFromList(listId, histWord.id);
+      setHistoryAddedIds((prev) => {
+        const next = { ...prev };
+        delete next[histWord.id];
+        return next;
+      });
+      showToast('↩ Видалено зі списку');
+    } catch (e) {
+      console.warn('History revert failed:', e?.message);
+    }
+  };
+
+  const handleRevert = async () => {
+    if (!result?.id || !lastAddedListId) return;
+    try {
+      await removeWordFromList(lastAddedListId, result.id);
+      setIsAdded(false);
+      setLastAddedListId(null);
+      showToast('↩ Видалено зі списку');
+    } catch (e) {
+      console.warn('Revert failed:', e?.message);
+      showToast('Не вдалось скасувати');
     }
   };
 
@@ -449,39 +554,128 @@ const handleSwap = () => {
           <View style={styles.header}>
   <Text style={styles.title}>{t('translate.title')}</Text>
 
-  <View style={styles.langRow}>
+  {/* ─── Screen tabs: Translate / History ─── */}
+  <View style={styles.screenTabs}>
     <TouchableOpacity
-      activeOpacity={0.85}
-      onPress={() => openLangModal('source')}
-      style={styles.langBubble}
+      style={[styles.screenTab, activeTab === 'translate' && styles.screenTabActive]}
+      onPress={() => setActiveTab('translate')}
+      activeOpacity={0.7}
     >
-      <Text style={styles.langBubbleText}>{sourceLang}</Text>
-      <Ionicons name="chevron-down" size={14} color={COLORS.textHint} />
+      <Text style={[styles.screenTabText, activeTab === 'translate' && styles.screenTabTextActive]}>
+        {t('translate.tab_translate')}
+      </Text>
     </TouchableOpacity>
-
     <TouchableOpacity
-      activeOpacity={0.9}
-      onPress={handleSwap}
-      style={styles.swapBtn}
+      style={[styles.screenTab, activeTab === 'history' && styles.screenTabActive]}
+      onPress={() => setActiveTab('history')}
+      activeOpacity={0.7}
     >
-      <Ionicons name="swap-horizontal" size={18} color={COLORS.primary} />
-    </TouchableOpacity>
-
-    <TouchableOpacity
-      activeOpacity={0.85}
-      onPress={() => openLangModal('target')}
-      style={styles.langBubble}
-    >
-      <Text style={styles.langBubbleText}>{targetLang}</Text>
-      <Ionicons name="chevron-down" size={14} color={COLORS.textHint} />
+      <Text style={[styles.screenTabText, activeTab === 'history' && styles.screenTabTextActive]}>
+        {t('translate.tab_history')}
+        {history.length > 0 ? ` (${history.length})` : ''}
+      </Text>
     </TouchableOpacity>
   </View>
 
-  <Text style={styles.subtitle} numberOfLines={1}>
-    {sourceLang} → {targetLang} · {t('translate.powered_by_ai')}
-  </Text>
+  {activeTab === 'translate' && (
+    <>
+      <View style={styles.langRow}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => openLangModal('source')}
+          style={styles.langBubble}
+        >
+          <Text style={styles.langBubbleText}>{sourceLang}</Text>
+          <Ionicons name="chevron-down" size={14} color={COLORS.textHint} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={handleSwap}
+          style={styles.swapBtn}
+        >
+          <Ionicons name="swap-horizontal" size={18} color={COLORS.primary} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => openLangModal('target')}
+          style={styles.langBubble}
+        >
+          <Text style={styles.langBubbleText}>{targetLang}</Text>
+          <Ionicons name="chevron-down" size={14} color={COLORS.textHint} />
+        </TouchableOpacity>
+      </View>
+
+      <Text style={styles.subtitle} numberOfLines={1}>
+        {sourceLang} → {targetLang} · {t('translate.powered_by_ai')}
+      </Text>
+    </>
+  )}
 </View>
 
+{/* ─── History tab content ─── */}
+{activeTab === 'history' && (
+  <View style={styles.historyContainer}>
+    {history.length === 0 ? (
+      <View style={styles.historyEmpty}>
+        <Text style={styles.historyEmptyIcon}>🕐</Text>
+        <Text style={styles.historyEmptyTitle}>{t('translate.history_empty_title')}</Text>
+        <Text style={styles.historyEmptySubtitle}>{t('translate.history_empty_sub')}</Text>
+      </View>
+    ) : (
+      history.map((histWord) => {
+        const isHistAdded = !!historyAddedIds[histWord.id];
+        return (
+          <View key={histWord.id} style={styles.historyCard}>
+            <View style={styles.historyCardHeader}>
+              <View style={styles.historyCardLeft}>
+                <Text style={styles.historyCardWord}>{histWord.original}</Text>
+                {histWord.transcription ? (
+                  <Text style={styles.historyCardTranscription}>{histWord.transcription}</Text>
+                ) : null}
+              </View>
+              <View style={styles.historyCardRight}>
+                {histWord.cefr_level ? (
+                  <Text style={styles.historyCardCefr}>{histWord.cefr_level}</Text>
+                ) : null}
+                <Text style={styles.historyCardLang}>
+                  {histWord.source_lang} → {histWord.target_lang}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.historyCardTranslation}>{histWord.translation}</Text>
+            {!!histWord.definition && (
+              <Text style={styles.historyCardDefinition}>{histWord.definition}</Text>
+            )}
+            {isHistAdded ? (
+              <View style={styles.historyAddedRow}>
+                <Text style={styles.historyAddedText}>✓ Added to list</Text>
+                <TouchableOpacity
+                  style={styles.historyRevertBtn}
+                  onPress={() => handleHistoryRevert(histWord)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.historyRevertText}>Revert</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.historyAddBtn}
+                onPress={() => openHistoryWordModal(histWord)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.historyAddBtnText}>+ Add to list</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        );
+      })
+    )}
+  </View>
+)}
+
+{activeTab === 'translate' && (
 <View style={styles.inputCard}>
   <Text style={styles.inputLabel}>{t('translate.input_label')}</Text>
   <View style={styles.inputWrap}>
@@ -503,7 +697,16 @@ const handleSwap = () => {
     />
     {query.length > 0 && (
       <TouchableOpacity
-        onPress={() => setQuery('')}
+        onPress={() => {
+          setQuery('');
+          setResult(null);
+          setError(null);
+          setAlternatives([]);
+          setIsAdded(false);
+          setLastAddedListId(null);
+          setSelectedIds(new Set());
+          setAddedAltIds(new Set());
+        }}
         hitSlop={12}
         style={styles.clearBtn}
       >
@@ -552,25 +755,27 @@ const handleSwap = () => {
 
   <Text style={styles.hint}>{t('translate.hint')}</Text>
 </View>
+)}
 
-{error && (
+{activeTab === 'translate' && error && (
             <View style={styles.errorBox}>
               <Text style={styles.errorText}>{error}</Text>
             </View>
           )}
 
-          {result && (
+          {activeTab === 'translate' && result && (
             <View style={styles.resultContainer}>
               <WordCard
                 word={result}
                 onAddToList={openAddToListModal}
                 isAdded={isAdded}
+                onRevert={isAdded ? handleRevert : null}
               />
             </View>
           )}
 
           {/* ─── Alternatives section ─── */}
-          {result && alternatives.length > 0 && (
+          {activeTab === 'translate' && result && alternatives.length > 0 && (
             <View style={styles.altSection}>
               {/* Section header */}
               <View style={styles.altSectionHeader}>
@@ -648,11 +853,16 @@ const handleSwap = () => {
           visible={showModal}
           lists={lists}
           suggestedList={suggestedListName}
-          onSelect={pendingAltWord ? handleAltAddToList : handleAddToList}
-          onClose={() => { setShowModal(false); setPendingAltWord(null); }}
+          onSelect={
+            pendingAltWord ? handleAltAddToList
+            : pendingHistoryWord ? handleHistoryAddToList
+            : handleAddToList
+          }
+          onClose={() => { setShowModal(false); setPendingAltWord(null); setPendingHistoryWord(null); }}
           onCreateNew={() => {
             setShowModal(false);
             setPendingAltWord(null);
+            setPendingHistoryWord(null);
             handleCreateNewList();
           }}
         />
@@ -704,6 +914,8 @@ const handleSwap = () => {
                       handleBulkAddToList(info.listId, { ...info._bulkOpts, forceMix: true });
                     } else if (info._isAlt) {
                       handleAltAddToList(info.listId, { forceMix: true });
+                    } else if (info._isHistory) {
+                      handleHistoryAddToList(info.listId, { forceMix: true });
                     } else {
                       handleAddToList(info.listId, { forceMix: true });
                     }
@@ -996,7 +1208,169 @@ mixBtnAddText: {
   color: '#ffffff',
 },
 
-// ─── Alternatives section ────────────────────────────────────────────────
+// ─── Screen tabs ─────────────────────────────────────────────────────────
+screenTabs: {
+  flexDirection: 'row',
+  marginTop: SPACING.md,
+  borderRadius: BORDER_RADIUS.md,
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  backgroundColor: COLORS.surface,
+  overflow: 'hidden',
+},
+screenTab: {
+  flex: 1,
+  paddingVertical: 9,
+  alignItems: 'center',
+  justifyContent: 'center',
+},
+screenTabActive: {
+  backgroundColor: COLORS.primary,
+},
+screenTabText: {
+  fontSize: 13,
+  fontWeight: '600',
+  color: COLORS.textMuted,
+},
+screenTabTextActive: {
+  color: '#ffffff',
+},
+
+// ─── History ──────────────────────────────────────────────────────────────
+historyContainer: {
+  paddingTop: SPACING.lg,
+  gap: SPACING.md,
+},
+historyEmpty: {
+  alignItems: 'center',
+  paddingVertical: 60,
+  paddingHorizontal: 24,
+},
+historyEmptyIcon: {
+  fontSize: 36,
+  marginBottom: 12,
+},
+historyEmptyTitle: {
+  fontSize: 16,
+  fontWeight: '600',
+  color: COLORS.textPrimary,
+  marginBottom: 6,
+  textAlign: 'center',
+},
+historyEmptySubtitle: {
+  fontSize: 14,
+  color: COLORS.textMuted,
+  textAlign: 'center',
+  lineHeight: 20,
+},
+historyCard: {
+  backgroundColor: COLORS.surface,
+  borderRadius: BORDER_RADIUS.lg,
+  padding: SPACING.lg,
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 1 },
+  shadowOpacity: 0.03,
+  shadowRadius: 2,
+  elevation: 1,
+},
+historyCardHeader: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'flex-start',
+  marginBottom: 6,
+},
+historyCardLeft: {
+  flex: 1,
+},
+historyCardRight: {
+  alignItems: 'flex-end',
+  gap: 4,
+},
+historyCardWord: {
+  fontSize: 18,
+  fontWeight: '500',
+  color: COLORS.primary,
+},
+historyCardTranscription: {
+  fontSize: 12,
+  color: COLORS.textMuted,
+  fontFamily: 'Courier',
+  marginTop: 2,
+},
+historyCardCefr: {
+  fontSize: 11,
+  fontWeight: '700',
+  color: COLORS.textMuted,
+  paddingHorizontal: 7,
+  paddingVertical: 2,
+  borderRadius: 999,
+  borderWidth: 1,
+  borderColor: COLORS.border,
+},
+historyCardLang: {
+  fontSize: 11,
+  color: COLORS.textHint,
+},
+historyCardTranslation: {
+  fontSize: 15,
+  fontWeight: '500',
+  color: COLORS.textPrimary,
+  marginBottom: 4,
+},
+historyCardDefinition: {
+  fontSize: 12,
+  color: COLORS.textSecondary,
+  fontStyle: 'italic',
+  marginBottom: 10,
+  lineHeight: 18,
+},
+historyAddBtn: {
+  marginTop: 10,
+  paddingVertical: 9,
+  borderRadius: BORDER_RADIUS.md,
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  backgroundColor: '#fafbfc',
+  alignItems: 'center',
+},
+historyAddBtnText: {
+  fontSize: 13,
+  fontWeight: '500',
+  color: COLORS.textPrimary,
+},
+historyAddedRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  marginTop: 10,
+  borderRadius: BORDER_RADIUS.md,
+  borderWidth: 1,
+  borderColor: '#bbf7d0',
+  backgroundColor: '#f0fdf4',
+  overflow: 'hidden',
+},
+historyAddedText: {
+  flex: 1,
+  paddingVertical: 9,
+  paddingHorizontal: 12,
+  fontSize: 13,
+  fontWeight: '500',
+  color: '#16a34a',
+},
+historyRevertBtn: {
+  paddingVertical: 9,
+  paddingHorizontal: 12,
+  borderLeftWidth: 1,
+  borderLeftColor: '#bbf7d0',
+},
+historyRevertText: {
+  fontSize: 12,
+  fontWeight: '600',
+  color: '#dc2626',
+},
+
+// ─── Alternatives section ─────────────────────────────────────────────────────
 altSection: {
   marginBottom: SPACING.lg,
 },

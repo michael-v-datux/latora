@@ -62,7 +62,11 @@
     "lang_all": "All languages",
     "alternatives_title": "OTHER MEANINGS",
     "add_selected": "Add {{count}} selected to list",
-    "pro_teaser": "🔒 More for Pro"
+    "pro_teaser": "🔒 More for Pro",
+    "tab_translate": "Translate",
+    "tab_history": "History",
+    "history_empty_title": "No translations yet",
+    "history_empty_sub": "Translated words will appear here."
   },
   "word": {
     "difficulty": "DIFFICULTY",
