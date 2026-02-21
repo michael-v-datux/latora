@@ -140,11 +140,12 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
             .gte("added_at", thirtyDaysAgo.toISOString())
         : Promise.resolve({ data: [] }),
 
-      // practice_events: результати для review activity
+      // practice_events: результати для review activity + heatmap (30 днів)
       supabase
         .from("practice_events")
-        .select("result")
-        .eq("user_id", userId),
+        .select("result, created_at")
+        .eq("user_id", userId)
+        .gte("created_at", thirtyDaysAgo.toISOString()),
 
       // words: difficulty factors для weakness map
       wordIds.length > 0
@@ -196,19 +197,47 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
       if (i < 7) velocity7 += count;
     }
 
-    // ── 8. Обчислення: review_activity ──────────────────────────────────────
+    // ── 8. Обчислення: review_activity + mistake_heatmap ────────────────────
     let totalReviews = 0;
     let correctReviews = 0;
+
+    // Heatmap: { date: { total, correct } } за 30 днів
+    const heatmapByDate = {};
     for (const ev of eventsRes.data || []) {
       totalReviews++;
       if (ev.result === true) correctReviews++;
+      // Heatmap bucket
+      try {
+        const dayStr = new Date(ev.created_at).toLocaleDateString("en-CA", {
+          timeZone: clientTz || "UTC",
+        });
+        if (!heatmapByDate[dayStr]) heatmapByDate[dayStr] = { total: 0, correct: 0 };
+        heatmapByDate[dayStr].total++;
+        if (ev.result === true) heatmapByDate[dayStr].correct++;
+      } catch { /* skip */ }
     }
+
     const reviewActivity = {
       total_reviews: totalReviews,
       correct: correctReviews,
       incorrect: totalReviews - correctReviews,
       accuracy_pct: totalReviews > 0 ? Math.round((correctReviews / totalReviews) * 100) : null,
     };
+
+    // Будуємо 30-денний heatmap масив (той самий діапазон що vocab_growth)
+    const mistakeHeatmap = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dayStr = d.toLocaleDateString("en-CA", { timeZone: clientTz || "UTC" });
+      const bucket = heatmapByDate[dayStr];
+      if (bucket && bucket.total > 0) {
+        const accuracy = Math.round((bucket.correct / bucket.total) * 100);
+        mistakeHeatmap.push({ date: dayStr, total: bucket.total, correct: bucket.correct, accuracy_pct: accuracy });
+      } else {
+        mistakeHeatmap.push({ date: dayStr, total: 0, correct: 0, accuracy_pct: null });
+      }
+    }
 
     // ── 9. Обчислення: difficulty_overview + weakness_map ───────────────────
     const factorMap = new Map((factorRes.data || []).map((w) => [w.id, w]));
@@ -287,6 +316,7 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
       vocab_growth: vocabGrowth,
       vocab_velocity: { last_7_days: velocity7, last_30_days: velocity30 },
       review_activity: reviewActivity,
+      mistake_heatmap: mistakeHeatmap,
       difficulty_overview: difficultyOverview,
       weakness_map: weaknessMap,
     });

@@ -186,7 +186,19 @@
     "pro_lock_cta": "Unlock Pro",
     "pro_difficulty_lock": "Personal Difficulty Analytics",
     "pro_velocity_lock": "Vocabulary Velocity",
-    "diff_no_data": "Practice more words to see analytics"
+    "diff_no_data": "Practice more words to see analytics",
+    "heatmap_section": "MISTAKE HEATMAP",
+    "heatmap_no_data": "No review activity yet",
+    "heatmap_words": "{{count}} reviews",
+    "heatmap_accuracy": "{{pct}}% correct",
+    "heatmap_empty_day": "No activity",
+    "weakness_better": "easier than avg",
+    "weakness_harder": "harder than avg",
+    "weakness_neutral": "about average",
+    "factor_freq_info": "How often this word appears in everyday speech. Rare words are harder to recall.",
+    "factor_poly_info": "How many distinct meanings this word has. More meanings = more confusion.",
+    "factor_morph_info": "How complex the word's grammatical structure is (prefixes, suffixes, conjugation).",
+    "factor_phrase_info": "Whether this is an idiom or multi-word expression. Fixed phrases are harder to learn."
   },
   "practice": {
     "title": "Practice",

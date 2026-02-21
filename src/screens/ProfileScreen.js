@@ -9,9 +9,9 @@
  *  5. Most Active CEFR Level (inline, 1 рядок)
  *  6. Розподіл слів за CEFR
  *  7. Tab Switcher (Overview / Activity / Difficulty)
- *     - Overview: Vocab Growth chart (7D/30D) + Velocity (Pro) або locked
- *     - Activity:  Review stats + Accuracy bar
- *     - Difficulty: Difficulty Overview + Weakness Map (Pro) або locked
+ *     - Overview: Vocab Growth chart (7D/30D, tap bar = tooltip) + Velocity (Pro) або locked
+ *     - Activity:  Review stats + Accuracy bar + Mistake Heatmap
+ *     - Difficulty: Difficulty Overview + Weakness Map з info-tooltips (Pro) або locked
  *  8. Налаштування
  *  9. Рядок-тригер мови + Modal
  */
@@ -50,10 +50,10 @@ const STATE_COLORS = {
 };
 
 const WEAKNESS_FACTORS = [
-  { key: "frequency_band",   i18nKey: "word.factor_freq"  },
-  { key: "polysemy_level",   i18nKey: "word.factor_poly"  },
-  { key: "morph_complexity", i18nKey: "word.factor_morph" },
-  { key: "phrase_flag",      i18nKey: "word.factor_phrase"},
+  { key: "frequency_band",   i18nKey: "word.factor_freq",   infoKey: "profile.factor_freq_info"   },
+  { key: "polysemy_level",   i18nKey: "word.factor_poly",   infoKey: "profile.factor_poly_info"   },
+  { key: "morph_complexity", i18nKey: "word.factor_morph",  infoKey: "profile.factor_morph_info"  },
+  { key: "phrase_flag",      i18nKey: "word.factor_phrase", infoKey: "profile.factor_phrase_info" },
 ];
 
 const SETTINGS = [
@@ -128,21 +128,149 @@ function LockedProBlock({ t, label }) {
   );
 }
 
-/** Горизонтальна смуга фактора для Weakness Map */
-function FactorBarLocal({ label, value, color }) {
+/** Горизонтальна смуга фактора для Weakness Map з кнопкою ⓘ */
+function FactorBarLocal({ label, value, color, avgDelta, infoText }) {
+  const [infoVisible, setInfoVisible] = useState(false);
+
+  // Текст-підказка: +N harder / -N easier / neutral
+  const deltaLabel =
+    avgDelta > 5  ? `+${avgDelta} pts` :
+    avgDelta < -5 ? `${avgDelta} pts` :
+    "~0 pts";
+  const deltaColor =
+    avgDelta > 5  ? "#dc2626" :
+    avgDelta < -5 ? "#16a34a" :
+    COLORS.textMuted;
+
   return (
-    <View style={styles.factorRow}>
-      <Text style={styles.factorLabel} numberOfLines={1}>{label}</Text>
-      <View style={styles.factorTrack}>
+    <View style={{ marginBottom: 12 }}>
+      {/* Рядок: label + ⓘ + bar + value */}
+      <View style={styles.factorRow}>
+        <View style={styles.factorLabelWrap}>
+          <Text style={styles.factorLabel} numberOfLines={1}>{label}</Text>
+          <TouchableOpacity
+            onPress={() => setInfoVisible((v) => !v)}
+            hitSlop={8}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name={infoVisible ? "information-circle" : "information-circle-outline"}
+              size={14}
+              color={infoVisible ? COLORS.primary : COLORS.textHint}
+            />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.factorTrack}>
+          <View
+            style={[
+              styles.factorFill,
+              { width: `${Math.min(100, Math.max(0, value))}%`, backgroundColor: color },
+            ]}
+          />
+          {/* Центральна лінія (50%) */}
+          <View style={styles.factorCenter} />
+        </View>
+        <Text style={[styles.factorDelta, { color: deltaColor }]}>{deltaLabel}</Text>
+      </View>
+      {/* Розгорнутий tooltip */}
+      {infoVisible && (
+        <View style={styles.factorInfoBox}>
+          <Text style={styles.factorInfoText}>{infoText}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+/** Один бар у Vocab Growth chart з тап-tooltip */
+function GrowthBarWithTooltip({ day, barH, isToday, t }) {
+  const [tooltipVisible, setTooltipVisible] = useState(false);
+  const hasData = day.count > 0;
+
+  return (
+    <View style={styles.growthColumn}>
+      {/* Tooltip: абсолютно над баром */}
+      {tooltipVisible && (
+        <View style={[styles.growthTooltip, { bottom: barH + 6 }]}>
+          <Text style={styles.growthTooltipDate}>{formatDayLabel(day.date)}</Text>
+          <Text style={styles.growthTooltipCount}>
+            {day.count} {day.count === 1 ? "word" : "words"}
+          </Text>
+        </View>
+      )}
+      <TouchableOpacity
+        style={{ width: "100%", alignItems: "center" }}
+        onPress={() => hasData && setTooltipVisible((v) => !v)}
+        activeOpacity={hasData ? 0.7 : 1}
+      >
         <View
           style={[
-            styles.factorFill,
-            { width: `${Math.min(100, Math.max(0, value))}%`, backgroundColor: color },
+            styles.growthBar,
+            {
+              height: barH,
+              backgroundColor: isToday
+                ? COLORS.primary
+                : hasData
+                  ? COLORS.primary + "55"
+                  : COLORS.borderLight,
+            },
           ]}
         />
-      </View>
-      <Text style={styles.factorValue}>{value}</Text>
+      </TouchableOpacity>
     </View>
+  );
+}
+
+/** Клітинка теплової карти помилок */
+function HeatmapCell({ day, t }) {
+  const [tooltipVisible, setTooltipVisible] = useState(false);
+
+  const getCellColor = () => {
+    if (!day || day.total === 0) return COLORS.borderLight;
+    const acc = day.accuracy_pct;
+    if (acc >= 80) return "#16a34a44"; // зелений
+    if (acc >= 60) return "#ca8a0444"; // жовтий
+    return "#dc262644";               // червоний
+  };
+
+  const getBorderColor = () => {
+    if (!day || day.total === 0) return COLORS.borderLight;
+    const acc = day.accuracy_pct;
+    if (acc >= 80) return "#16a34a88";
+    if (acc >= 60) return "#ca8a0488";
+    return "#dc262688";
+  };
+
+  return (
+    <TouchableOpacity
+      onPress={() => day.total > 0 && setTooltipVisible((v) => !v)}
+      activeOpacity={day.total > 0 ? 0.7 : 1}
+      style={{ position: "relative" }}
+    >
+      <View
+        style={[
+          styles.heatCell,
+          { backgroundColor: getCellColor(), borderColor: getBorderColor() },
+        ]}
+      />
+      {tooltipVisible && (
+        <View style={styles.heatTooltip}>
+          <Text style={styles.heatTooltipDate}>{formatDayLabel(day.date)}</Text>
+          <Text style={styles.heatTooltipLine}>
+            {t("profile.heatmap_words", { count: day.total })}
+          </Text>
+          <Text style={styles.heatTooltipLine}>
+            {t("profile.heatmap_accuracy", { pct: day.accuracy_pct })}
+          </Text>
+          <TouchableOpacity
+            onPress={() => setTooltipVisible(false)}
+            style={styles.heatTooltipClose}
+          >
+            <Ionicons name="close" size={10} color={COLORS.textMuted} />
+          </TouchableOpacity>
+        </View>
+      )}
+    </TouchableOpacity>
   );
 }
 
@@ -244,6 +372,10 @@ export default function ProfileScreen({ navigation }) {
   // Difficulty (Pro)
   const difficultyOverview = profileData?.difficulty_overview ?? null;
   const weaknessMap        = profileData?.weakness_map ?? null;
+
+  // Mistake Heatmap (30 днів)
+  const mistakeHeatmap30 = profileData?.mistake_heatmap ?? [];
+  const mistakeHeatmap   = growthWindow === 7 ? mistakeHeatmap30.slice(-7) : mistakeHeatmap30;
 
   // Plan badge config
   const PLAN_CONFIG = {
@@ -475,21 +607,13 @@ export default function ProfileScreen({ navigation }) {
                         ? Math.max(Math.round((day.count / growthMax) * 56), 4)
                         : 2;
                       return (
-                        <View key={day.date} style={styles.growthColumn}>
-                          <View
-                            style={[
-                              styles.growthBar,
-                              {
-                                height:          barH,
-                                backgroundColor: isToday
-                                  ? COLORS.primary
-                                  : day.count > 0
-                                    ? COLORS.primary + "44"
-                                    : COLORS.borderLight,
-                              },
-                            ]}
-                          />
-                        </View>
+                        <GrowthBarWithTooltip
+                          key={day.date}
+                          day={day}
+                          barH={barH}
+                          isToday={isToday}
+                          t={t}
+                        />
                       );
                     })}
                   </View>
@@ -533,66 +657,127 @@ export default function ProfileScreen({ navigation }) {
 
         {/* ── Tab: Activity ── */}
         {activeTab === "activity" && (
-          <View style={styles.card}>
-            <Text style={styles.sectionLabel}>{t("profile.review_activity_section")}</Text>
-            {loading ? (
-              <ActivityIndicator size="small" color={COLORS.textMuted} style={{ marginTop: 8 }} />
-            ) : reviewActivity.total_reviews === 0 ? (
-              <View style={styles.cefrEmpty}>
-                <Text style={styles.cefrEmptyIcon}>📖</Text>
-                <Text style={styles.cefrEmptyText}>{t("profile.streak_empty_title")}</Text>
-                <TouchableOpacity
-                  style={styles.emptyBtn}
-                  onPress={() => navigation.navigate("Practice")}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.emptyBtnText}>{t("profile.streak_empty_btn")}</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <>
-                <View style={styles.activityRow}>
-                  <View style={styles.activityStat}>
-                    <Text style={styles.activityBigNum}>{reviewActivity.total_reviews}</Text>
-                    <Text style={styles.activityStatLabel}>{t("profile.reviews_total")}</Text>
-                  </View>
-                  <View style={styles.activityDivider} />
-                  <View style={styles.activityStat}>
-                    <Text style={[styles.activityBigNum, { color: "#16a34a" }]}>
-                      {reviewActivity.correct}
-                    </Text>
-                    <Text style={styles.activityStatLabel}>{t("profile.reviews_correct")}</Text>
-                  </View>
-                  <View style={styles.activityDivider} />
-                  <View style={styles.activityStat}>
-                    <Text style={[styles.activityBigNum, { color: "#dc2626" }]}>
-                      {reviewActivity.incorrect}
-                    </Text>
-                    <Text style={styles.activityStatLabel}>{t("profile.reviews_incorrect")}</Text>
-                  </View>
+          <>
+            {/* Review Activity stats */}
+            <View style={styles.card}>
+              <Text style={styles.sectionLabel}>{t("profile.review_activity_section")}</Text>
+              {loading ? (
+                <ActivityIndicator size="small" color={COLORS.textMuted} style={{ marginTop: 8 }} />
+              ) : reviewActivity.total_reviews === 0 ? (
+                <View style={styles.cefrEmpty}>
+                  <Text style={styles.cefrEmptyIcon}>📖</Text>
+                  <Text style={styles.cefrEmptyText}>{t("profile.streak_empty_title")}</Text>
+                  <TouchableOpacity
+                    style={styles.emptyBtn}
+                    onPress={() => navigation.navigate("Practice")}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.emptyBtnText}>{t("profile.streak_empty_btn")}</Text>
+                  </TouchableOpacity>
                 </View>
-                {reviewActivity.accuracy_pct != null && (
-                  <View style={{ marginTop: 4 }}>
-                    <View style={styles.accuracyLabelRow}>
-                      <Text style={styles.sectionLabel}>{t("profile.reviews_accuracy")}</Text>
-                      <Text style={styles.sectionLabel}>{reviewActivity.accuracy_pct}%</Text>
+              ) : (
+                <>
+                  <View style={styles.activityRow}>
+                    <View style={styles.activityStat}>
+                      <Text style={styles.activityBigNum}>{reviewActivity.total_reviews}</Text>
+                      <Text style={styles.activityStatLabel}>{t("profile.reviews_total")}</Text>
                     </View>
-                    <View style={styles.accuracyTrack}>
-                      <View
-                        style={[
-                          styles.accuracyFill,
-                          {
-                            width:           `${reviewActivity.accuracy_pct}%`,
-                            backgroundColor: reviewActivity.accuracy_pct >= 70 ? "#16a34a" : "#ca8a04",
-                          },
-                        ]}
-                      />
+                    <View style={styles.activityDivider} />
+                    <View style={styles.activityStat}>
+                      <Text style={[styles.activityBigNum, { color: "#16a34a" }]}>
+                        {reviewActivity.correct}
+                      </Text>
+                      <Text style={styles.activityStatLabel}>{t("profile.reviews_correct")}</Text>
+                    </View>
+                    <View style={styles.activityDivider} />
+                    <View style={styles.activityStat}>
+                      <Text style={[styles.activityBigNum, { color: "#dc2626" }]}>
+                        {reviewActivity.incorrect}
+                      </Text>
+                      <Text style={styles.activityStatLabel}>{t("profile.reviews_incorrect")}</Text>
                     </View>
                   </View>
-                )}
-              </>
-            )}
-          </View>
+                  {reviewActivity.accuracy_pct != null && (
+                    <View style={{ marginTop: 4 }}>
+                      <View style={styles.accuracyLabelRow}>
+                        <Text style={styles.sectionLabel}>{t("profile.reviews_accuracy")}</Text>
+                        <Text style={styles.sectionLabel}>{reviewActivity.accuracy_pct}%</Text>
+                      </View>
+                      <View style={styles.accuracyTrack}>
+                        <View
+                          style={[
+                            styles.accuracyFill,
+                            {
+                              width:           `${reviewActivity.accuracy_pct}%`,
+                              backgroundColor: reviewActivity.accuracy_pct >= 70 ? "#16a34a" : "#ca8a04",
+                            },
+                          ]}
+                        />
+                      </View>
+                    </View>
+                  )}
+                </>
+              )}
+            </View>
+
+            {/* Mistake Heatmap */}
+            <View style={styles.card}>
+              <View style={styles.growthHeaderRow}>
+                <Text style={styles.sectionLabel}>{t("profile.heatmap_section")}</Text>
+                <View style={styles.windowToggle}>
+                  {[7, 30].map((w) => (
+                    <TouchableOpacity
+                      key={w}
+                      style={[styles.windowBtn, growthWindow === w && styles.windowBtnActive]}
+                      onPress={() => setGrowthWindow(w)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.windowBtnText, growthWindow === w && styles.windowBtnTextActive]}>
+                        {w === 7 ? "7D" : "30D"}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+              {loading ? (
+                <ActivityIndicator size="small" color={COLORS.textMuted} style={{ marginTop: 8 }} />
+              ) : mistakeHeatmap.every((d) => d.total === 0) ? (
+                <View style={styles.cefrEmpty}>
+                  <Text style={styles.cefrEmptyIcon}>📅</Text>
+                  <Text style={styles.cefrEmptyText}>{t("profile.heatmap_no_data")}</Text>
+                </View>
+              ) : (
+                <>
+                  <View style={styles.heatmapGrid}>
+                    {mistakeHeatmap.map((day) => (
+                      <HeatmapCell key={day.date} day={day} t={t} />
+                    ))}
+                  </View>
+                  {/* Date labels: first / middle / last */}
+                  <View style={styles.growthDateRow}>
+                    <Text style={styles.growthDateLabel}>
+                      {formatDayLabel(mistakeHeatmap[0]?.date)}
+                    </Text>
+                    <Text style={styles.growthDateLabel}>
+                      {formatDayLabel(mistakeHeatmap[Math.floor(mistakeHeatmap.length / 2)]?.date)}
+                    </Text>
+                    <Text style={styles.growthDateLabel}>{t("profile.vocab_growth_today")}</Text>
+                  </View>
+                  {/* Legend: none → red → amber → green */}
+                  <View style={styles.heatLegendRow}>
+                    <Text style={styles.heatLegendLabel}>{t("profile.heatmap_empty_day")}</Text>
+                    <View style={styles.heatLegendCells}>
+                      <View style={[styles.heatLegendCell, { backgroundColor: COLORS.borderLight }]} />
+                      <View style={[styles.heatLegendCell, { backgroundColor: "#dc262644", borderColor: "#dc262688" }]} />
+                      <View style={[styles.heatLegendCell, { backgroundColor: "#ca8a0444", borderColor: "#ca8a0488" }]} />
+                      <View style={[styles.heatLegendCell, { backgroundColor: "#16a34a44", borderColor: "#16a34a88" }]} />
+                    </View>
+                    <Text style={styles.heatLegendLabel}>100%</Text>
+                  </View>
+                </>
+              )}
+            </View>
+          </>
         )}
 
         {/* ── Tab: Difficulty ── */}
@@ -655,6 +840,8 @@ export default function ProfileScreen({ navigation }) {
                         label={t(factor.i18nKey)}
                         value={displayVal}
                         color={barColor}
+                        avgDelta={data.avg_delta ?? 0}
+                        infoText={t(factor.infoKey)}
                       />
                     );
                   })}
@@ -939,12 +1126,35 @@ const styles = StyleSheet.create({
   diffPillTrend:   { fontSize: 22, fontWeight: "300", color: COLORS.textMuted, fontFamily: "Courier" },
 
   // ── Weakness Map ──
-  weaknessHint: { fontSize: 11, color: COLORS.textHint, fontStyle: "italic", marginBottom: 10, marginTop: -8 },
-  factorRow:    { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
-  factorLabel:  { width: 82, fontSize: 11, color: COLORS.textMuted },
-  factorTrack:  { flex: 1, height: 6, backgroundColor: COLORS.borderLight, borderRadius: 3, overflow: "hidden" },
-  factorFill:   { height: 6, borderRadius: 3 },
-  factorValue:  { width: 28, fontSize: 11, color: COLORS.textMuted, textAlign: "right", fontFamily: "Courier" },
+  weaknessHint:    { fontSize: 11, color: COLORS.textHint, fontStyle: "italic", marginBottom: 10, marginTop: -8 },
+  factorRow:       { flexDirection: "row", alignItems: "center", gap: 8 },
+  factorLabelWrap: { flexDirection: "row", alignItems: "center", gap: 4, width: 90 },
+  factorLabel:     { fontSize: 11, color: COLORS.textMuted, flexShrink: 1 },
+  factorTrack:     { flex: 1, height: 6, backgroundColor: COLORS.borderLight, borderRadius: 3, overflow: "hidden", position: "relative" },
+  factorFill:      { height: 6, borderRadius: 3 },
+  factorCenter:    { position: "absolute", left: "50%", top: 0, width: 1, height: 6, backgroundColor: COLORS.borderLight + "99" },
+  factorDelta:     { width: 52, fontSize: 11, textAlign: "right", fontFamily: "Courier" },
+  factorValue:     { width: 28, fontSize: 11, color: COLORS.textMuted, textAlign: "right", fontFamily: "Courier" },
+  factorInfoBox:   { marginTop: 6, marginBottom: 4, backgroundColor: COLORS.background, borderRadius: BORDER_RADIUS.md, padding: 10, borderWidth: 1, borderColor: COLORS.borderLight },
+  factorInfoText:  { fontSize: 12, color: COLORS.textSecondary, lineHeight: 17 },
+
+  // ── Growth bar tooltip ──
+  growthTooltip:      { position: "absolute", left: -16, right: -16, backgroundColor: COLORS.primary, borderRadius: BORDER_RADIUS.sm, paddingVertical: 5, paddingHorizontal: 4, alignItems: "center", zIndex: 10 },
+  growthTooltipDate:  { fontSize: 10, color: "#ffffff", fontWeight: "600" },
+  growthTooltipCount: { fontSize: 11, color: "#ffffffcc", marginTop: 1 },
+  growthTooltipArrow: { position: "absolute", bottom: -4, left: "50%", marginLeft: -4, width: 8, height: 8, backgroundColor: COLORS.primary, transform: [{ rotate: "45deg" }] },
+
+  // ── Mistake Heatmap ──
+  heatmapGrid:    { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 4, marginBottom: 8 },
+  heatCell:       { width: 20, height: 20, borderRadius: 3, borderWidth: 1 },
+  heatTooltip:    { position: "absolute", bottom: 26, left: -24, width: 110, backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.sm, padding: 8, borderWidth: 1, borderColor: COLORS.borderLight, zIndex: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  heatTooltipDate:  { fontSize: 11, fontWeight: "600", color: COLORS.primary, marginBottom: 3 },
+  heatTooltipLine:  { fontSize: 11, color: COLORS.textSecondary, marginBottom: 1 },
+  heatTooltipClose: { position: "absolute", top: 5, right: 5, padding: 2 },
+  heatLegendRow:   { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 },
+  heatLegendLabel: { fontSize: 9, color: COLORS.textHint, fontFamily: "Courier" },
+  heatLegendCells: { flexDirection: "row", gap: 3, flex: 1, justifyContent: "center" },
+  heatLegendCell:  { width: 14, height: 14, borderRadius: 2, borderWidth: 1, borderColor: COLORS.borderLight },
 
   // ── Pro Lock Overlay ──
   lockWrapper:  { borderRadius: BORDER_RADIUS.lg, borderWidth: 1, borderColor: "#fde68a", backgroundColor: COLORS.surface, marginBottom: 10, overflow: "hidden", minHeight: 140 },
