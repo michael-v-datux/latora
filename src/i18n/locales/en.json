@@ -202,6 +202,7 @@
     "empty_list_title": "List is empty",
     "empty_list_message": "Add words to this list before starting practice.",
     "add_word_btn": "Add word",
+    "context_hint": "CONTEXT",
     "difficulty": {
       "hint": "Hint",
       "hint_desc": "Translation with hidden letters",
