@@ -911,6 +911,14 @@ export default function PracticeScreen({ route, navigation }) {
               <Text style={styles.flashcardWord}>{word.original}</Text>
               <Text style={styles.flashcardTranscription}>{word.transcription}</Text>
 
+              {/* Контекст (приклад речення) — допомагає розрізнити різні значення */}
+              {!!word.example_sentence && (
+                <View style={styles.contextHintBox}>
+                  <Text style={styles.contextHintLabel}>{t('practice.context_hint')}</Text>
+                  <Text style={styles.flashcardExample}>"{word.example_sentence}"</Text>
+                </View>
+              )}
+
               <View style={styles.revealedContent}>
                 <View style={styles.divider} />
                 {!revealed ? (
@@ -927,9 +935,7 @@ export default function PracticeScreen({ route, navigation }) {
                 ) : (
                   <>
                     <Text style={styles.flashcardTranslation}>{word.translation}</Text>
-                    {word.example_sentence ? (
-                      <Text style={styles.flashcardExample}>"{word.example_sentence}"</Text>
-                    ) : null}
+                    {/* Приклад не повторюємо — він вже показаний у contextHintBox вище */}
                   </>
                 )}
               </View>
@@ -942,6 +948,14 @@ export default function PracticeScreen({ route, navigation }) {
               <CefrBadge level={word.cefr_level} />
               <Text style={styles.flashcardWord}>{word.original}</Text>
               <Text style={styles.flashcardTranscription}>{word.transcription}</Text>
+
+              {/* Контекст — критично важливий у Quiz, щоб відрізнити "well → добре" від "well → криниця" */}
+              {!!word.example_sentence && (
+                <View style={styles.contextHintBox}>
+                  <Text style={styles.contextHintLabel}>{t('practice.context_hint')}</Text>
+                  <Text style={styles.flashcardExample}>"{word.example_sentence}"</Text>
+                </View>
+              )}
 
               <View style={styles.quizOptionsContainer}>
                 {quizOptions.map((opt, i) => {
@@ -997,6 +1011,14 @@ export default function PracticeScreen({ route, navigation }) {
               <Text style={styles.flashcardWord}>{word.original}</Text>
               <Text style={styles.flashcardTranscription}>{word.transcription}</Text>
 
+              {/* Контекст — завжди видимий, щоб розрізняти значення */}
+              {!!word.example_sentence && (
+                <View style={styles.contextHintBox}>
+                  <Text style={styles.contextHintLabel}>{t('practice.context_hint')}</Text>
+                  <Text style={styles.flashcardExample}>"{word.example_sentence}"</Text>
+                </View>
+              )}
+
               {!revealed && (
                 <Text style={styles.tapHint}>{t('practice.tap_to_reveal')}</Text>
               )}
@@ -1005,9 +1027,7 @@ export default function PracticeScreen({ route, navigation }) {
                 <View style={styles.revealedContent}>
                   <View style={styles.divider} />
                   <Text style={styles.flashcardTranslation}>{word.translation}</Text>
-                  {word.example_sentence ? (
-                    <Text style={styles.flashcardExample}>"{word.example_sentence}"</Text>
-                  ) : null}
+                  {/* Приклад вже показаний у contextHintBox вище */}
                 </View>
               )}
             </TouchableOpacity>
@@ -1017,6 +1037,14 @@ export default function PracticeScreen({ route, navigation }) {
           {difficulty === 4 && (
             <View style={styles.flashcard}>
               <Text style={styles.flashcardWord}>{word.original}</Text>
+
+              {/* Контекст — показуємо одразу, до відліку часу */}
+              {!!word.example_sentence && (
+                <View style={styles.contextHintBox}>
+                  <Text style={styles.contextHintLabel}>{t('practice.context_hint')}</Text>
+                  <Text style={styles.flashcardExample}>"{word.example_sentence}"</Text>
+                </View>
+              )}
 
               {/* Timer bar */}
               {!revealed && !timerExpired && (
@@ -1071,9 +1099,7 @@ export default function PracticeScreen({ route, navigation }) {
                   )}
                   <View style={styles.divider} />
                   <Text style={styles.flashcardTranslation}>{word.translation}</Text>
-                  {word.example_sentence ? (
-                    <Text style={styles.flashcardExample}>"{word.example_sentence}"</Text>
-                  ) : null}
+                  {/* Приклад вже показаний у contextHintBox вище */}
                 </View>
               )}
             </View>
@@ -1298,7 +1324,28 @@ const styles = StyleSheet.create({
   revealedContent: { marginTop: 24, alignItems: 'center', width: '100%' },
   divider: { height: 1, backgroundColor: COLORS.borderLight, width: 120, marginBottom: 20 },
   flashcardTranslation: { fontSize: 20, fontWeight: '500', color: COLORS.textPrimary, textAlign: 'center' },
-  flashcardExample: { fontSize: 13, color: COLORS.textMuted, fontStyle: 'italic', marginTop: 12, textAlign: 'center', lineHeight: 20 },
+  flashcardExample: { fontSize: 13, color: COLORS.textMuted, fontStyle: 'italic', marginTop: 4, textAlign: 'center', lineHeight: 20 },
+
+  // Context hint box (приклад речення до reveal — для розрізнення значень)
+  contextHintBox: {
+    marginTop: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    backgroundColor: '#fafbfc',
+    alignItems: 'center',
+    width: '100%',
+  },
+  contextHintLabel: {
+    fontSize: 9,
+    color: COLORS.textHint,
+    letterSpacing: 1,
+    fontWeight: '700',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
 
   // Level 1: masked
   maskedTranslation: { fontSize: 20, fontWeight: '500', color: COLORS.textMuted, textAlign: 'center', letterSpacing: 1 },
