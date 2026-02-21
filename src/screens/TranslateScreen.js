@@ -526,6 +526,7 @@ const handleSwap = () => {
                   onToggle={() => toggleAltSelection(alt.id)}
                   onAddToList={() => openAltAddModal(alt)}
                   isAdded={addedAltIds.has(alt.id)}
+                  isPro={subscriptionPlan === 'pro'}
                 />
               ))}
 
