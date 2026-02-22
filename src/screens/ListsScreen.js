@@ -572,7 +572,7 @@ export default function ListsScreen({ navigation }) {
                 /* Free: locked filter bar */
                 <TouchableOpacity
                   style={styles.filterLockBar}
-                  onPress={() => navigation.navigate('ProScreen')}
+                  onPress={() => navigation.navigate('Profile', { screen: 'ProScreen' })}
                   activeOpacity={0.8}
                 >
                   <Ionicons name="lock-closed" size={13} color="#ca8a04" />
