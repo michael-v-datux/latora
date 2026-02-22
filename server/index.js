@@ -13,6 +13,7 @@
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
+const { randomUUID } = require('crypto');
 const path = require('path');
 
 // Завантажуємо змінні з .env файлу
@@ -34,11 +35,20 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());              // дозволяє запити з мобільного додатка
 app.use(express.json());      // парсить JSON у тілі запитів
 
+// === Request ID — кожен запит отримує унікальний ID для трасування ===
+app.use((req, res, next) => {
+  req.requestId = randomUUID().slice(0, 8);
+  res.setHeader('X-Request-Id', req.requestId);
+  next();
+});
+
 // === Latency logging ===
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
-    console.log(`⏱ ${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - start}ms`);
+    const ms = Date.now() - start;
+    const icon = res.statusCode >= 500 ? '❌' : res.statusCode >= 400 ? '⚠️' : '⏱';
+    console.log(`${icon} [${req.requestId}] ${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms`);
   });
   next();
 });

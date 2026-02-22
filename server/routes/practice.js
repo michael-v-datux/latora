@@ -353,6 +353,71 @@ router.get("/practice/:listId", requireAuth, async (req, res, next) => {
   }
 });
 
+// ─── Валідація practice/result payload ───────────────────────────────────────
+
+const VALID_QUALITIES = new Set(['forgot', 'hard', 'good', 'easy']);
+
+// Перевіряємо що UUID виглядає як UUID (базовий guard)
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUUID(v) { return typeof v === 'string' && UUID_RE.test(v); }
+
+function validatePracticeResult({ wordId, quality, newProgress, sessionId, listId, answerTimeMs }) {
+  const errors = [];
+
+  if (!isUUID(wordId))                           errors.push("wordId має бути UUID");
+  if (!VALID_QUALITIES.has(quality))             errors.push(`quality має бути одним з: ${[...VALID_QUALITIES].join(', ')}`);
+  if (!newProgress || typeof newProgress !== 'object') {
+    errors.push("newProgress обов'язковий (object)");
+    return errors; // далі не перевіряємо якщо немає об'єкту
+  }
+
+  // SRS поля — перевіряємо діапазони щоб уникнути tamper
+  const ef = newProgress.ease_factor;
+  if (typeof ef !== 'number' || ef < 1.3 || ef > 2.5) errors.push("ease_factor має бути числом від 1.3 до 2.5");
+
+  const iv = newProgress.interval_days;
+  if (typeof iv !== 'number' || iv < 0 || iv > 3650) errors.push("interval_days має бути числом від 0 до 3650");
+
+  const reps = newProgress.repetitions;
+  if (typeof reps !== 'number' || reps < 0 || reps > 10000) errors.push("repetitions має бути числом >= 0");
+
+  // next_review — ISO date string
+  if (newProgress.next_review && isNaN(Date.parse(newProgress.next_review))) {
+    errors.push("next_review має бути ISO date string");
+  }
+
+  // personal_score — якщо є, то 0..100
+  if (newProgress.personal_score != null) {
+    const ps = newProgress.personal_score;
+    if (typeof ps !== 'number' || ps < 0 || ps > 100) errors.push("personal_score має бути числом 0..100");
+  }
+
+  // word_state — якщо є
+  const VALID_STATES = new Set(['new', 'learning', 'review', 'mastered']);
+  if (newProgress.word_state != null && !VALID_STATES.has(newProgress.word_state)) {
+    errors.push(`word_state має бути одним з: ${[...VALID_STATES].join(', ')}`);
+  }
+
+  // trend_direction — якщо є
+  const VALID_TRENDS = new Set(['up', 'down', 'stable']);
+  if (newProgress.trend_direction != null && !VALID_TRENDS.has(newProgress.trend_direction)) {
+    errors.push(`trend_direction має бути одним з: ${[...VALID_TRENDS].join(', ')}`);
+  }
+
+  // Опційні FK
+  if (sessionId != null && !isUUID(sessionId)) errors.push("sessionId має бути UUID або null");
+  if (listId    != null && !isUUID(listId))    errors.push("listId має бути UUID або null");
+
+  // answerTimeMs — якщо є, то розумне число
+  if (answerTimeMs != null) {
+    if (typeof answerTimeMs !== 'number' || answerTimeMs < 0 || answerTimeMs > 120000) {
+      errors.push("answerTimeMs має бути числом від 0 до 120000 мс");
+    }
+  }
+
+  return errors;
+}
+
 // POST /api/practice/result — зберегти результат повторення + practice_event
 router.post("/practice/result", requireAuth, async (req, res, next) => {
   try {
@@ -366,8 +431,10 @@ router.post("/practice/result", requireAuth, async (req, res, next) => {
       answerTimeMs = null,  // час відповіді (мс)
     } = req.body;
 
-    if (!wordId || !quality || !newProgress) {
-      return res.status(400).json({ error: "wordId, quality та newProgress обов'язкові" });
+    // ── Серверна валідація payload ──────────────────────────────────────────
+    const validationErrors = validatePracticeResult({ wordId, quality, newProgress, sessionId, listId, answerTimeMs });
+    if (validationErrors.length > 0) {
+      return res.status(400).json({ error: validationErrors[0], details: validationErrors });
     }
 
     const userId = req.user.id;

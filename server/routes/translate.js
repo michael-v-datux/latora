@@ -15,7 +15,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { translateText, getLanguages } = require('../services/deepl');
+const { translateText } = require('../services/deepl');
 const { assessDifficulty } = require('../services/difficulty');
 const { detectIdioms } = require('../services/idioms');
 const { generateAlternatives } = require('../services/alternatives');
@@ -28,15 +28,36 @@ const supabaseAdmin = require('../lib/supabase.admin.cjs');
 // Ліміти альтернатив по плану
 const MAX_ALTS = { free: 3, pro: 7 };
 
-router.get('/languages', async (req, res, next) => {
-  try {
-    const source = await getLanguages('source');
-    const target = await getLanguages('target');
-    return res.json({ source, target });
-  } catch (e) {
-    return next(e);
-  }
-});
+// GET /languages видалено — використовується routes/languages.js (з фільтрацією ALLOWED)
+
+// ─── Inflight dedupe ──────────────────────────────────────────────────────────
+// Якщо 2 запити на одне й те саме слово прийдуть одночасно до того,
+// як перший встиг зберегтися в кеш — вони поділяють один Promise.
+// TTL 90с: після завершення (або помилки) ключ видаляється.
+const inflightMap = new Map(); // key → { promise, timer }
+
+function inflightKey(word, srcLang, tgtLang) {
+  return `${word.toLowerCase()}|${srcLang}|${tgtLang}`;
+}
+
+function inflightGet(key) {
+  return inflightMap.get(key)?.promise ?? null;
+}
+
+function inflightSet(key, promise) {
+  // Автоматичне прибирання через 90 секунд навіть якщо щось пішло не так
+  const timer = setTimeout(() => inflightMap.delete(key), 90_000);
+  inflightMap.set(key, { promise, timer });
+  // Прибираємо одразу після завершення
+  promise.finally(() => {
+    const entry = inflightMap.get(key);
+    if (entry) {
+      clearTimeout(entry.timer);
+      inflightMap.delete(key);
+    }
+  });
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 const NOT_FOUND_MSG = 'Цього слова немає у словнику';
 
@@ -204,106 +225,130 @@ router.post('/translate', optionalAuth, async (req, res) => {
       return res.json({ ...cached, alternatives, _source: 'cache' });
     }
 
-    // Крок 2: Переклад через DeepL
-    console.log(`🔤 Перекладаємо: "${cleanWord}"`);
-    const { translation: deeplTranslation } = await translateText(cleanWord, srcLang, tgtLang);
-
-    // Якщо DeepL повернув те саме — вважаємо "немає у словнику" і НЕ кешуємо
-    if (!deeplTranslation || isIdentityTranslation(cleanWord, deeplTranslation)) {
-      console.log(`🧹 Not caching identity/empty translation: "${cleanWord}" -> "${deeplTranslation || ''}"`);
-      return res.json({
-        error: NOT_FOUND_MSG,
-        _source: 'deepl_identity',
-      });
+    // ── Inflight dedupe: якщо хтось вже рахує це слово — підключаємося до того Promise ──
+    const iKey = inflightKey(cleanWord, srcLang, tgtLang);
+    const existingInflight = inflightGet(iKey);
+    if (existingInflight) {
+      console.log(`🔁 Inflight: "${cleanWord}" вже обробляється, чекаємо...`);
+      try {
+        const inflightResult = await existingInflight;
+        // Підбираємо альтернативи відповідно до плану поточного користувача
+        const alts = inflightResult._source === 'ai' && inflightResult.id
+          ? await fetchCachedAlternatives(inflightResult.id, req.subscriptionPlan)
+          : (inflightResult.alternatives || []);
+        return res.json({ ...inflightResult, alternatives: alts, _source: 'inflight' });
+      } catch {
+        // Якщо основний запит впав — падаємо разом, не намагаємось ще раз
+        return res.status(500).json({ error: 'Помилка перекладу' });
+      }
     }
 
-    // Крок 2.5: Виявлення ідіом (не ламає потік; при помилці просто пропускаємо)
-    let idiom = null;
-    try {
-      idiom = await detectIdioms({
-        original: cleanWordRaw,
+    // ── Основна "дорога" логіка — обгортаємо в Promise для inflight ─────────
+    const translatePromise = (async () => {
+      // Крок 2: Переклад через DeepL
+      console.log(`🔤 Перекладаємо: "${cleanWord}"`);
+      const { translation: deeplTranslation } = await translateText(cleanWord, srcLang, tgtLang);
+
+      // Якщо DeepL повернув те саме — вважаємо "немає у словнику" і НЕ кешуємо
+      if (!deeplTranslation || isIdentityTranslation(cleanWord, deeplTranslation)) {
+        console.log(`🧹 Not caching identity/empty translation: "${cleanWord}" -> "${deeplTranslation || ''}"`);
+        return { error: NOT_FOUND_MSG, _source: 'deepl_identity' };
+      }
+
+      // Крок 2.5: Виявлення ідіом (не ламає потік; при помилці просто пропускаємо)
+      let idiom = null;
+      try {
+        idiom = await detectIdioms({
+          original: cleanWordRaw,
+          sourceLang: srcLang,
+          targetLang: tgtLang,
+          literalTranslation: deeplTranslation,
+        });
+      } catch (e) {
+        console.warn('⚠️ Idiom detect error:', e?.message || e);
+        idiom = null;
+      }
+
+      // Якщо це ідіома — основний переклад робимо "idiomatic" (перший варіант),
+      // а DeepL лишаємо як literal у alt_translations
+      const primaryTranslation = (idiom && idiom.is_idiom && Array.isArray(idiom.idiomatic_translations) && idiom.idiomatic_translations[0])
+        ? idiom.idiomatic_translations[0]
+        : deeplTranslation;
+
+      // Крок 3: Difficulty Engine v2 (BaseScore + AI Adjustment)
+      console.log(`🧠 Оцінюємо складність v2: "${cleanWord}"`);
+      const difficulty = await assessDifficulty(cleanWord, primaryTranslation, {
         sourceLang: srcLang,
         targetLang: tgtLang,
-        literalTranslation: deeplTranslation,
       });
-    } catch (e) {
-      console.warn('⚠️ Idiom detect error:', e?.message || e);
-      idiom = null;
-    }
 
-    // Якщо це ідіома — основний переклад робимо "idiomatic" (перший варіант),
-    // а DeepL лишаємо як literal у alt_translations
-    const primaryTranslation = (idiom && idiom.is_idiom && Array.isArray(idiom.idiomatic_translations) && idiom.idiomatic_translations[0])
-      ? idiom.idiomatic_translations[0]
-      : deeplTranslation;
+      // Крок 4: Зберігаємо в базу (включаючи нові поля v2)
+      const wordData = {
+        original: cleanWord,
+        source_lang: srcLang,
+        target_lang: tgtLang,
+        translation: primaryTranslation,
+        transcription:    difficulty.transcription,
+        difficulty_score: difficulty.difficulty_score,
+        cefr_level:       difficulty.cefr_level,
+        difficulty_factors: difficulty.factors,
+        example_sentence: difficulty.example_sentence,
+        part_of_speech:   difficulty.part_of_speech,
 
-    // Крок 3: Difficulty Engine v2 (BaseScore + AI Adjustment)
-    console.log(`🧠 Оцінюємо складність v2: "${cleanWord}"`);
-    const difficulty = await assessDifficulty(cleanWord, primaryTranslation, {
-      sourceLang: srcLang,
-      targetLang: tgtLang,
-    });
+        // ── Difficulty Engine v2: нові поля ──────────────────────────
+        base_score:       difficulty.base_score,
+        ai_adjustment:    difficulty.ai_adjustment,
+        confidence_score: difficulty.confidence_score,
+        frequency_band:   difficulty.frequency_band,
+        polysemy_level:   difficulty.polysemy_level,
+        morph_complexity: difficulty.morph_complexity,
+        phrase_flag:      difficulty.phrase_flag,
+        // ─────────────────────────────────────────────────────────────
 
-    // Крок 4: Зберігаємо в базу (включаючи нові поля v2)
-    const wordData = {
-      original: cleanWord,
-      source_lang: srcLang,
-      target_lang: tgtLang,
-      translation: primaryTranslation,
-      transcription:    difficulty.transcription,
-      difficulty_score: difficulty.difficulty_score,
-      cefr_level:       difficulty.cefr_level,
-      difficulty_factors: difficulty.factors,
-      example_sentence: difficulty.example_sentence,
-      part_of_speech:   difficulty.part_of_speech,
+        definition:       difficulty.definition,
 
-      // ── Difficulty Engine v2: нові поля ──────────────────────────
-      base_score:       difficulty.base_score,
-      ai_adjustment:    difficulty.ai_adjustment,
-      confidence_score: difficulty.confidence_score,
-      frequency_band:   difficulty.frequency_band,
-      polysemy_level:   difficulty.polysemy_level,
-      morph_complexity: difficulty.morph_complexity,
-      phrase_flag:      difficulty.phrase_flag,
-      // ─────────────────────────────────────────────────────────────
+        // Для ідіом: зберігаємо ідіоматичні варіанти + literal(DeepL)
+        alt_translations: (idiom && idiom.is_idiom)
+          ? {
+              idiomatic: idiom.idiomatic_translations,
+              literal: idiom.literal_translation || deeplTranslation,
+            }
+          : null,
+        translation_notes: (idiom && idiom.is_idiom) ? idiom.note : null,
+        translation_kind:  (idiom && idiom.is_idiom) ? 'idiom' : null,
+      };
 
-      definition:       difficulty.definition,
+      const { data: saved, error: saveError } = await supabaseAdmin
+        .from('words')
+        // upsert щоб не падати на UNIQUE у випадку гонки (тепер включає translation)
+        .upsert(wordData, { onConflict: 'original,source_lang,target_lang,translation' })
+        .select()
+        .single();
 
-      // Для ідіом: зберігаємо ідіоматичні варіанти + literal(DeepL)
-      alt_translations: (idiom && idiom.is_idiom)
-        ? {
-            idiomatic: idiom.idiomatic_translations,
-            literal: idiom.literal_translation || deeplTranslation,
-          }
-        : null,
-      translation_notes: (idiom && idiom.is_idiom) ? idiom.note : null,
-      translation_kind:  (idiom && idiom.is_idiom) ? 'idiom' : null,
-    };
+      if (saveError) {
+        console.warn('⚠️ Не вдалось зберегти в базу:', saveError.message);
+        // Все одно повертаємо результат (навіть якщо кеш не спрацював)
+        return { ...wordData, alternatives: [], _source: 'ai', _cacheSaved: false };
+      }
 
-    const { data: saved, error: saveError } = await supabaseAdmin
-      .from('words')
-      // upsert щоб не падати на UNIQUE у випадку гонки (тепер включає translation)
-      .upsert(wordData, { onConflict: 'original,source_lang,target_lang,translation' })
-      .select()
-      .single();
+      console.log(`✅ Збережено: "${cleanWord}" (${difficulty.cefr_level}, ${difficulty.difficulty_score}/100)`);
 
-    if (saveError) {
-      console.warn('⚠️ Не вдалось зберегти в базу:', saveError.message);
-      // Все одно повертаємо результат (навіть якщо кеш не спрацював)
-      return res.json({ ...wordData, alternatives: [], _source: 'ai', _cacheSaved: false });
-    }
+      // ─── Генеруємо альтернативні переклади ──────────────────────────────
+      const planLimit = MAX_ALTS[req.subscriptionPlan || 'free'] ?? 3;
+      const alternatives = await generateAndCacheAlternatives(
+        saved,
+        primaryTranslation,
+        { sourceLang: srcLang, targetLang: tgtLang, maxCount: planLimit },
+      );
 
-    console.log(`✅ Збережено: "${cleanWord}" (${difficulty.cefr_level}, ${difficulty.difficulty_score}/100)`);
+      return { ...saved, alternatives, _source: 'ai', _cacheSaved: true };
+    })();
 
-    // ─── Генеруємо альтернативні переклади ───────────────────────────────
-    const planLimit = MAX_ALTS[req.subscriptionPlan || 'free'] ?? 3;
-    const alternatives = await generateAndCacheAlternatives(
-      saved,
-      primaryTranslation,
-      { sourceLang: srcLang, targetLang: tgtLang, maxCount: planLimit },
-    );
+    // Реєструємо в inflight map
+    inflightSet(iKey, translatePromise);
 
-    return res.json({ ...saved, alternatives, _source: 'ai', _cacheSaved: true });
+    const result = await translatePromise;
+    return res.json(result);
 
   } catch (error) {
     console.error('❌ Помилка перекладу:', error.message);
