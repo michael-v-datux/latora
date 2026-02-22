@@ -23,11 +23,15 @@ import { fetchLists, createList, addWordToList, removeWordFromList } from '../se
 import { fetchMyProfile } from '../services/profileService';
 import { COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
 import { useI18n } from '../i18n';
+import { useAuth } from '../hooks/useAuth';
 
 // Ліміти альтернатив по плану
 const MAX_ALTS = { free: 3, pro: 7 };
 
-const HISTORY_KEY = 'TRANSLATE_HISTORY';
+// History key is user-scoped to prevent leaking between accounts on the same device.
+// Language preferences (source/target/pinned/recent) stay device-global — they're not
+// sensitive and it's good UX to preserve them across sign-out/sign-in.
+const historyKey = (userId) => userId ? `TRANSLATE_HISTORY_${userId}` : null;
 const HISTORY_MAX = 25;
 
 // ─── Ліміти вводу по плану ────────────────────────────────────────────────────
@@ -62,6 +66,9 @@ function validateInput(text, limits) {
 
 export default function TranslateScreen() {
   const { t } = useI18n();
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+
   const [activeTab, setActiveTab] = useState('translate'); // 'translate' | 'history'
   const [history, setHistory] = useState([]);               // [{...wordObj, addedToListId}]
   const [historyAddedIds, setHistoryAddedIds] = useState({}); // { wordId: listId }
@@ -117,50 +124,64 @@ const [recentTarget, setRecentTarget] = useState([]);
   };
 
   const saveToHistory = async (wordObj) => {
+    const key = historyKey(userId);
+    if (!key) return; // not logged in — don't save
     try {
-      const savedRaw = await AsyncStorage.getItem(HISTORY_KEY);
+      const savedRaw = await AsyncStorage.getItem(key);
       const prev = savedRaw ? JSON.parse(savedRaw) : [];
       // Видаляємо дублікат якщо вже є (за id)
       const filtered = prev.filter((w) => w.id !== wordObj.id);
       const next = [wordObj, ...filtered].slice(0, HISTORY_MAX);
       setHistory(next);
-      await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      await AsyncStorage.setItem(key, JSON.stringify(next));
     } catch (e) {
       // ignore
     }
   };
 
-  
-useEffect(() => {
-  (async () => {
-    try {
-      const savedSource = await AsyncStorage.getItem('TRANSLATE_SOURCE_LANG');
-      const savedTarget = await AsyncStorage.getItem('TRANSLATE_TARGET_LANG');
-      const savedPinned = await AsyncStorage.getItem('PINNED_LANGS');
-      const savedRecentSource = await AsyncStorage.getItem('RECENT_SOURCE_LANGS');
-      const savedRecentTarget = await AsyncStorage.getItem('RECENT_TARGET_LANGS');
-      const savedHistory = await AsyncStorage.getItem(HISTORY_KEY);
+  // ── Load device-global preferences (once, on mount) ───────────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        const savedSource      = await AsyncStorage.getItem('TRANSLATE_SOURCE_LANG');
+        const savedTarget      = await AsyncStorage.getItem('TRANSLATE_TARGET_LANG');
+        const savedPinned      = await AsyncStorage.getItem('PINNED_LANGS');
+        const savedRecentSource = await AsyncStorage.getItem('RECENT_SOURCE_LANGS');
+        const savedRecentTarget = await AsyncStorage.getItem('RECENT_TARGET_LANGS');
 
-      if (savedSource) setSourceLang(savedSource);
-      if (savedTarget) setTargetLang(savedTarget);
-      if (savedPinned) setPinnedLangs(JSON.parse(savedPinned) || []);
-      if (savedRecentSource) setRecentSource(JSON.parse(savedRecentSource) || []);
-      if (savedRecentTarget) setRecentTarget(JSON.parse(savedRecentTarget) || []);
-      if (savedHistory) setHistory(JSON.parse(savedHistory) || []);
-    } catch (e) {
-      // ignore
-    }
+        if (savedSource)      setSourceLang(savedSource);
+        if (savedTarget)      setTargetLang(savedTarget);
+        if (savedPinned)      setPinnedLangs(JSON.parse(savedPinned) || []);
+        if (savedRecentSource) setRecentSource(JSON.parse(savedRecentSource) || []);
+        if (savedRecentTarget) setRecentTarget(JSON.parse(savedRecentTarget) || []);
+      } catch (e) {
+        // ignore
+      }
 
-    try {
-      const { source, target } = await fetchLanguages();
-      // small UX: keep mostly European languages (DeepL list is already curated, but includes non-EU)
-      setDeeplSource(source || []);
-      setDeeplTarget(target || []);
-    } catch (e) {
-      // ignore; translate still works with defaults
-    }
-  })();
-}, []);
+      try {
+        const { source, target } = await fetchLanguages();
+        setDeeplSource(source || []);
+        setDeeplTarget(target || []);
+      } catch (e) {
+        // ignore; translate still works with defaults
+      }
+    })();
+  }, []); // runs once — language prefs are device-global
+
+  // ── Load per-user history whenever the logged-in user changes ─────────────
+  // Resets to [] immediately when userId changes (sign-out / switch account),
+  // then loads the correct user's history from their scoped key.
+  useEffect(() => {
+    setHistory([]);           // clear immediately so previous user's history isn't visible
+    setHistoryAddedIds({});   // clear add-state as well
+
+    const key = historyKey(userId);
+    if (!key) return; // no user logged in — leave empty
+
+    AsyncStorage.getItem(key)
+      .then(raw => { if (raw) setHistory(JSON.parse(raw) || []); })
+      .catch(() => {});
+  }, [userId]);
 
 useEffect(() => {
   AsyncStorage.setItem('TRANSLATE_SOURCE_LANG', sourceLang).catch(() => {});

@@ -30,6 +30,7 @@ import {
 } from '../services/practiceService';
 import { COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
 import { useI18n } from '../i18n';
+import { useAuth } from '../hooks/useAuth';
 
 // ─── Кнопки оцінки ───
 const ANSWER_BUTTONS = [
@@ -139,6 +140,8 @@ function generateOptions(correctWord, allWords, distractors = []) {
 
 export default function PracticeScreen({ route, navigation }) {
   const { t } = useI18n();
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
 
   // ─── Стан навігації ───
   const [screen, setScreen] = useState('home'); // home | difficulty | session | results
@@ -189,7 +192,8 @@ export default function PracticeScreen({ route, navigation }) {
   const pendingSubmitsRef = useRef([]);
 
   // ─── Незавершені сесії (AsyncStorage) ───────────────────────────────────────
-  // Ключ: 'practice_pending_sessions'
+  // Ключ: 'practice_pending_sessions_<userId>'  (user-scoped — different users on the
+  //        same device get separate keys so sessions don't leak across accounts)
   // Значення: { [listId]: { wordsAnswered: number, total: number, date: 'YYYY-MM-DD' } }
   //
   // Чому AsyncStorage, а не сервер:
@@ -200,7 +204,7 @@ export default function PracticeScreen({ route, navigation }) {
   // Дата: кожен запис містить поточну локальну дату (YYYY-MM-DD).
   //   При читанні — записи зі застарілою датою відкидаються, щоб "done_partial" /
   //   "partial" не залишались після полуночі.
-  const PENDING_KEY = 'practice_pending_sessions';
+  const pendingKey = userId ? `practice_pending_sessions_${userId}` : null;
   const [pendingSessions, setPendingSessions] = useState({}); // { [listId]: { wordsAnswered, total, date } }
 
   // Повертає поточну локальну дату у форматі 'YYYY-MM-DD'
@@ -209,10 +213,14 @@ export default function PracticeScreen({ route, navigation }) {
     return now.toLocaleDateString('en-CA'); // 'YYYY-MM-DD' у будь-якій TZ
   };
 
-  // Читаємо pending sessions з AsyncStorage при монтуванні.
-  // Відкидаємо будь-які записи, що були збережені не сьогодні.
+  // Читаємо pending sessions з AsyncStorage.
+  // Залежить від userId — очищається при зміні акаунту, відкидає застарілі (не сьогоднішні) записи.
   useEffect(() => {
-    AsyncStorage.getItem(PENDING_KEY)
+    setPendingSessions({}); // очищаємо при зміні userId (sign-out / switch account)
+
+    if (!pendingKey) return;
+
+    AsyncStorage.getItem(pendingKey)
       .then(raw => {
         if (!raw) return;
         const parsed = JSON.parse(raw);
@@ -230,14 +238,15 @@ export default function PracticeScreen({ route, navigation }) {
         setPendingSessions(fresh);
         // Якщо були застарілі записи — зберігаємо вже очищений об'єкт
         if (changed) {
-          AsyncStorage.setItem(PENDING_KEY, JSON.stringify(fresh)).catch(() => {});
+          AsyncStorage.setItem(pendingKey, JSON.stringify(fresh)).catch(() => {});
         }
       })
       .catch(() => {});
-  }, []);
+  }, [userId]); // re-run when user changes
 
   // Записати/видалити pending session для конкретного списку
   const setPendingSession = useCallback(async (listId, data) => {
+    if (!pendingKey) return; // no user — don't persist
     setPendingSessions(prev => {
       const next = { ...prev };
       if (data === null) {
@@ -246,10 +255,10 @@ export default function PracticeScreen({ route, navigation }) {
         // Додаємо поточну локальну дату — щоб після полуночі запис відкидався
         next[listId] = { ...data, date: todayLocalDate() };
       }
-      AsyncStorage.setItem(PENDING_KEY, JSON.stringify(next)).catch(() => {});
+      AsyncStorage.setItem(pendingKey, JSON.stringify(next)).catch(() => {});
       return next;
     });
-  }, []);
+  }, [pendingKey]);
 
   // ─── Завантаження даних для Home ───
   const loadHomeData = useCallback(async () => {
