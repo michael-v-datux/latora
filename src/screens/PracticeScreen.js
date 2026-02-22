@@ -190,20 +190,48 @@ export default function PracticeScreen({ route, navigation }) {
 
   // ─── Незавершені сесії (AsyncStorage) ───────────────────────────────────────
   // Ключ: 'practice_pending_sessions'
-  // Значення: { [listId]: { wordsAnswered: number, total: number } }
+  // Значення: { [listId]: { wordsAnswered: number, total: number, date: 'YYYY-MM-DD' } }
   //
   // Чому AsyncStorage, а не сервер:
   //   Лічення practice_events vs sessions×total ненадійне — після багатьох сесій
   //   накопичуються "зайві" events і баланс ламається (показує 3/2, partial після done).
   //   AsyncStorage — єдине джерело правди: ми самі записуємо старт і видаляємо фініш.
+  //
+  // Дата: кожен запис містить поточну локальну дату (YYYY-MM-DD).
+  //   При читанні — записи зі застарілою датою відкидаються, щоб "done_partial" /
+  //   "partial" не залишались після полуночі.
   const PENDING_KEY = 'practice_pending_sessions';
-  const [pendingSessions, setPendingSessions] = useState({}); // { [listId]: { wordsAnswered, total } }
+  const [pendingSessions, setPendingSessions] = useState({}); // { [listId]: { wordsAnswered, total, date } }
 
-  // Читаємо pending sessions з AsyncStorage при монтуванні
+  // Повертає поточну локальну дату у форматі 'YYYY-MM-DD'
+  const todayLocalDate = () => {
+    const now = new Date();
+    return now.toLocaleDateString('en-CA'); // 'YYYY-MM-DD' у будь-якій TZ
+  };
+
+  // Читаємо pending sessions з AsyncStorage при монтуванні.
+  // Відкидаємо будь-які записи, що були збережені не сьогодні.
   useEffect(() => {
     AsyncStorage.getItem(PENDING_KEY)
       .then(raw => {
-        if (raw) setPendingSessions(JSON.parse(raw));
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        const today = todayLocalDate();
+        // Фільтруємо лише сьогоднішні записи
+        const fresh = {};
+        let changed = false;
+        for (const [listId, entry] of Object.entries(parsed)) {
+          if (entry?.date === today) {
+            fresh[listId] = entry;
+          } else {
+            changed = true; // є застарілі — треба оновити AsyncStorage
+          }
+        }
+        setPendingSessions(fresh);
+        // Якщо були застарілі записи — зберігаємо вже очищений об'єкт
+        if (changed) {
+          AsyncStorage.setItem(PENDING_KEY, JSON.stringify(fresh)).catch(() => {});
+        }
       })
       .catch(() => {});
   }, []);
@@ -215,7 +243,8 @@ export default function PracticeScreen({ route, navigation }) {
       if (data === null) {
         delete next[listId];
       } else {
-        next[listId] = data;
+        // Додаємо поточну локальну дату — щоб після полуночі запис відкидався
+        next[listId] = { ...data, date: todayLocalDate() };
       }
       AsyncStorage.setItem(PENDING_KEY, JSON.stringify(next)).catch(() => {});
       return next;
