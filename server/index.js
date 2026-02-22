@@ -20,11 +20,12 @@ const path = require('path');
 require('dotenv').config();
 require("./lib/env");
 
-const translateRoutes = require('./routes/translate');
-const listsRoutes = require('./routes/lists');
-const practiceRoutes = require('./routes/practice');
-const languagesRoutes = require('./routes/languages');
-const profileRoutes   = require('./routes/profile');
+const translateRoutes    = require('./routes/translate');
+const listsRoutes        = require('./routes/lists');
+const practiceRoutes     = require('./routes/practice');
+const languagesRoutes    = require('./routes/languages');
+const profileRoutes      = require('./routes/profile');
+const subscriptionRoutes = require('./routes/subscription');
 
 const errorHandler = require("./middleware/error");
 
@@ -68,6 +69,7 @@ app.use('/api', listsRoutes);
 app.use('/api', practiceRoutes);
 app.use('/api', languagesRoutes);
 app.use('/api', profileRoutes);
+app.use('/api', subscriptionRoutes);
 
 // === Health check (перевірка що сервер працює) ===
 app.get('/api/health', (req, res) => {

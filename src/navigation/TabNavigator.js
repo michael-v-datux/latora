@@ -12,6 +12,7 @@
 
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';  // Безкоштовні іконки від Expo
 import { COLORS } from '../utils/constants';
 import { useI18n } from '../i18n';
@@ -21,9 +22,21 @@ import TranslateScreen from '../screens/TranslateScreen';
 import ListsScreen from '../screens/ListsScreen';
 import PracticeScreen from '../screens/PracticeScreen';
 import ProfileScreen from '../screens/ProfileScreen';
+import ProScreen from '../screens/ProScreen';
 
-// Створюємо навігатор
+// Створюємо навігатори
 const Tab = createBottomTabNavigator();
+const ProfileStack = createNativeStackNavigator();
+
+// Profile tab — stack so ProfileScreen can push to ProScreen
+function ProfileStackNavigator() {
+  return (
+    <ProfileStack.Navigator screenOptions={{ headerShown: false }}>
+      <ProfileStack.Screen name="ProfileMain" component={ProfileScreen} />
+      <ProfileStack.Screen name="ProScreen" component={ProScreen} />
+    </ProfileStack.Navigator>
+  );
+}
 
 export default function TabNavigator() {
   const { t } = useI18n();
@@ -76,7 +89,7 @@ export default function TabNavigator() {
       <Tab.Screen name="Translate" component={TranslateScreen} options={{ tabBarLabel: t('tabs.translate') }} />
       <Tab.Screen name="Lists" component={ListsScreen} options={{ tabBarLabel: t('tabs.lists') }} />
       <Tab.Screen name="Practice" component={PracticeScreen} options={{ tabBarLabel: t('tabs.practice') }} />
-      <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarLabel: t('tabs.profile') }} />
+      <Tab.Screen name="Profile" component={ProfileStackNavigator} options={{ tabBarLabel: t('tabs.profile') }} />
     </Tab.Navigator>
   );
 }

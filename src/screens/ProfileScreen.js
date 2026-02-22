@@ -104,7 +104,7 @@ function TabSwitcherBar({ active, onChange, t }) {
 }
 
 /** Заблокований Pro-блок: розмитий фейковий контент + оверлей з lock-іконкою */
-function LockedProBlock({ t, label }) {
+function LockedProBlock({ t, label, onUnlock }) {
   return (
     <View style={styles.lockWrapper}>
       {/* Фейковий контент (майже прозорий) для ілюзії розмиття */}
@@ -120,7 +120,7 @@ function LockedProBlock({ t, label }) {
         </View>
         <Text style={styles.lockTitle}>{label}</Text>
         <Text style={styles.lockSubtitle}>{t("profile.pro_lock_subtitle")}</Text>
-        <TouchableOpacity style={styles.lockCta} activeOpacity={0.8}>
+        <TouchableOpacity style={styles.lockCta} activeOpacity={0.8} onPress={onUnlock}>
           <Text style={styles.lockCtaText}>{t("profile.pro_lock_cta")}</Text>
         </TouchableOpacity>
       </View>
@@ -427,6 +427,11 @@ export default function ProfileScreen({ navigation }) {
   };
   const planCfg = PLAN_CONFIG[plan] ?? PLAN_CONFIG.free;
 
+  // Navigate to ProScreen (in the same stack)
+  const openProScreen = useCallback(() => {
+    navigation.navigate("ProScreen");
+  }, [navigation]);
+
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
@@ -438,7 +443,11 @@ export default function ProfileScreen({ navigation }) {
         </View>
 
         {/* ── 1. Plan badge ── */}
-        <View style={[styles.planCard, { backgroundColor: planCfg.bg, borderColor: planCfg.border }]}>
+        <TouchableOpacity
+          style={[styles.planCard, { backgroundColor: planCfg.bg, borderColor: planCfg.border }]}
+          onPress={!isPro ? openProScreen : undefined}
+          activeOpacity={!isPro ? 0.75 : 1}
+        >
           {loading ? (
             <ActivityIndicator size="small" color={COLORS.textMuted} />
           ) : (
@@ -448,9 +457,14 @@ export default function ProfileScreen({ navigation }) {
                 <Text style={styles.planSublabel}>{t("profile.plan_label")}</Text>
                 <Text style={[styles.planName, { color: planCfg.color }]}>{planCfg.label}</Text>
               </View>
+              {!isPro && (
+                <View style={styles.planUpgradeChip}>
+                  <Text style={styles.planUpgradeChipText}>{t("profile.plan_upgrade_cta")}</Text>
+                </View>
+              )}
             </View>
           )}
-        </View>
+        </TouchableOpacity>
 
         {/* ── 2. Картка профілю ── */}
         <View style={styles.profileCard}>
@@ -701,7 +715,7 @@ export default function ProfileScreen({ navigation }) {
                 )}
               </View>
             ) : (
-              <LockedProBlock t={t} label={t("profile.pro_velocity_lock")} />
+              <LockedProBlock t={t} label={t("profile.pro_velocity_lock")} onUnlock={openProScreen} />
             )}
           </>
         )}
@@ -902,7 +916,7 @@ export default function ProfileScreen({ navigation }) {
               )}
             </>
           ) : (
-            <LockedProBlock t={t} label={t("profile.pro_difficulty_lock")} />
+            <LockedProBlock t={t} label={t("profile.pro_difficulty_lock")} onUnlock={openProScreen} />
           )
         )}
 
@@ -1055,8 +1069,10 @@ const styles = StyleSheet.create({
   planRow:      { flexDirection: "row", alignItems: "center", gap: 12 },
   planEmoji:    { fontSize: 28 },
   planTextWrap: { flex: 1 },
-  planSublabel: { fontSize: 11, color: COLORS.textMuted, fontWeight: "500", letterSpacing: 0.5 },
-  planName:     { fontSize: 18, fontWeight: "700", marginTop: 1 },
+  planSublabel:       { fontSize: 11, color: COLORS.textMuted, fontWeight: "500", letterSpacing: 0.5 },
+  planName:           { fontSize: 18, fontWeight: "700", marginTop: 1 },
+  planUpgradeChip:    { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: "#ca8a04" },
+  planUpgradeChipText:{ fontSize: 11, fontWeight: "700", color: "#ffffff", letterSpacing: 0.3 },
 
   // ── Профіль ──
   profileCard: {
