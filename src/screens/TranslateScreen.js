@@ -259,7 +259,14 @@ const handleSwap = () => {
       const alts = Array.isArray(data?.alternatives) ? data.alternatives.slice(0, planLimit) : [];
       setAlternatives(alts);
     } catch (err) {
-      setError(err.message);
+      // Handle structured limit errors from server (429)
+      const errorCode = err?.response?.data?.errorCode || err?.data?.errorCode;
+      if (errorCode === 'AI_LIMIT_REACHED') {
+        const limit = err?.response?.data?.limit || err?.data?.limit || 5;
+        setError(`__AI_LIMIT__${limit}`); // special sentinel for UI
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -278,7 +285,7 @@ const handleSwap = () => {
         suggestList(result.id),
       ]);
 
-      const safeLists = Array.isArray(listsData) ? listsData : [];
+      const safeLists = Array.isArray(listsData) ? listsData : (listsData?.lists || []);
       setLists(safeLists);
 
       if (suggestion?.suggested_list_id) {
@@ -491,7 +498,7 @@ const handleSwap = () => {
 
     try {
       const listsData = await fetchLists();
-      setLists(Array.isArray(listsData) ? listsData : []);
+      setLists(Array.isArray(listsData) ? listsData : (listsData?.lists || []));
     } catch (e) {
       console.warn('openBulkAddModal failed:', e?.message);
     }
@@ -758,9 +765,25 @@ const handleSwap = () => {
 )}
 
 {activeTab === 'translate' && error && (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
+            error.startsWith('__AI_LIMIT__') ? (
+              <View style={styles.limitBox}>
+                <Text style={styles.limitTitle}>{t('translate.limit_ai_title')}</Text>
+                <Text style={styles.limitBody}>
+                  {t('translate.limit_ai_body', { max: error.replace('__AI_LIMIT__', '') })}
+                </Text>
+                <TouchableOpacity
+                  style={styles.limitUpgradeBtn}
+                  onPress={() => setError(null)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.limitUpgradeText}>{t('translate.limit_ai_upgrade')}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            )
           )}
 
           {activeTab === 'translate' && result && (
@@ -1052,6 +1075,38 @@ const styles = StyleSheet.create({
   errorText: {
     color: '#dc2626',
     fontSize: 13,
+  },
+  limitBox: {
+    backgroundColor: '#fefce8',
+    borderRadius: BORDER_RADIUS.md,
+    padding: 14,
+    marginBottom: SPACING.lg,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    gap: 6,
+  },
+  limitTitle: {
+    color: '#92400e',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  limitBody: {
+    color: '#78350f',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  limitUpgradeBtn: {
+    marginTop: 4,
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#ca8a04',
+  },
+  limitUpgradeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
   },
   resultContainer: {
     marginBottom: SPACING.lg,

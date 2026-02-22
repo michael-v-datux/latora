@@ -10,11 +10,14 @@ const express = require("express");
 const router = express.Router();
 
 const requireAuth = require("../middleware/requireAuth");
+const loadPlan    = require("../middleware/loadPlan");
+const { getEntitlements } = require("../config/entitlements");
 
 // GET /api/lists — отримати списки поточного користувача
-router.get("/lists", requireAuth, async (req, res, next) => {
+router.get("/lists", requireAuth, loadPlan, async (req, res, next) => {
   try {
     const supabase = req.supabase;
+    const ent      = req.entitlements;
 
     const { data, error } = await supabase
       .from("lists")
@@ -23,26 +26,53 @@ router.get("/lists", requireAuth, async (req, res, next) => {
 
     if (error) throw error;
 
-    return res.json(
-      (data || []).map((l) => ({
-        ...l,
-        word_count: l.list_words?.[0]?.count || 0,
-      }))
-    );
+    const lists = (data || []).map((l) => ({
+      ...l,
+      word_count: l.list_words?.[0]?.count || 0,
+    }));
+
+    // Include usage metadata so client can show "2/3 lists"
+    return res.json({
+      lists,
+      usage: {
+        listCount:  lists.length,
+        maxLists:   ent.maxLists,
+        plan:       req.plan,
+      },
+    });
   } catch (error) {
     return next(error);
   }
 });
 
 // POST /api/lists — створити список
-router.post("/lists", requireAuth, async (req, res, next) => {
+router.post("/lists", requireAuth, loadPlan, async (req, res, next) => {
   try {
     const supabase = req.supabase;
+    const ent      = req.entitlements;
 
     const { name, emoji = "📚", description = "" } = req.body;
 
     if (!name || typeof name !== "string" || name.trim().length === 0) {
       return res.status(400).json({ error: "Назва обов'язкова" });
+    }
+
+    // ── Check maxLists limit ─────────────────────────────────────────────────
+    const { count: listCount, error: countErr } = await supabase
+      .from("lists")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", req.user.id);
+
+    if (countErr) throw countErr;
+
+    if (listCount >= ent.maxLists) {
+      return res.status(429).json({
+        error: `Досягнуто ліміт списків (${ent.maxLists} на ${req.plan} плані). Оновіться до Pro.`,
+        errorCode: "LISTS_LIMIT_REACHED",
+        limit: ent.maxLists,
+        used: listCount,
+        plan: req.plan,
+      });
     }
 
     const { data, error } = await supabase
@@ -65,13 +95,54 @@ router.post("/lists", requireAuth, async (req, res, next) => {
 });
 
 // POST /api/lists/:id/words — додати слово до списку
-router.post("/lists/:id/words", requireAuth, async (req, res, next) => {
+router.post("/lists/:id/words", requireAuth, loadPlan, async (req, res, next) => {
   try {
     const supabase = req.supabase;
+    const ent      = req.entitlements;
     const { wordId, forceMix = false, rememberChoice = false } = req.body;
 
     if (!wordId) {
       return res.status(400).json({ error: "wordId обов'язковий" });
+    }
+
+    // ── Check maxSavesPerDay ─────────────────────────────────────────────────
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+
+    // RLS on list_words ensures we only count current user's list_words
+    // by joining through lists (user_id check enforced by RLS)
+    const { count: savesToday, error: savesErr } = await supabase
+      .from("list_words")
+      .select("id", { count: "exact", head: true })
+      .gte("added_at", todayStart.toISOString());
+
+    if (savesErr) throw savesErr;
+
+    if (savesToday >= ent.maxSavesPerDay) {
+      return res.status(429).json({
+        error: `Досягнуто денний ліміт збережень (${ent.maxSavesPerDay}/день). Оновіться до Pro.`,
+        errorCode: "SAVES_LIMIT_REACHED",
+        limit: ent.maxSavesPerDay,
+        used: savesToday,
+        plan: req.plan,
+      });
+    }
+
+    // ── Check maxTotalWords ──────────────────────────────────────────────────
+    const { count: totalWords, error: totalErr } = await supabase
+      .from("list_words")
+      .select("id", { count: "exact", head: true });
+
+    if (totalErr) throw totalErr;
+
+    if (totalWords >= ent.maxTotalWords) {
+      return res.status(429).json({
+        error: `Досягнуто ліміт слів (${ent.maxTotalWords} слів на ${req.plan} плані). Оновіться до Pro.`,
+        errorCode: "WORDS_LIMIT_REACHED",
+        limit: ent.maxTotalWords,
+        used: totalWords,
+        plan: req.plan,
+      });
     }
 
     // 1) Fetch list settings

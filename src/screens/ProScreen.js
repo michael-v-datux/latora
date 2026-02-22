@@ -46,24 +46,39 @@ const PRO_FEATURES = [
     descKey:  'pro.feature_alts_desc',
   },
   {
+    icon: 'save-outline',
+    titleKey: 'pro.feature_saves_title',
+    descKey:  'pro.feature_saves_desc',
+  },
+  {
+    icon: 'flash-outline',
+    titleKey: 'pro.feature_ai_title',
+    descKey:  'pro.feature_ai_desc',
+  },
+  {
+    icon: 'folder-outline',
+    titleKey: 'pro.feature_lists_title',
+    descKey:  'pro.feature_lists_desc',
+  },
+  {
+    icon: 'fitness-outline',
+    titleKey: 'pro.feature_practice_title',
+    descKey:  'pro.feature_practice_desc',
+  },
+  {
+    icon: 'filter-outline',
+    titleKey: 'pro.feature_filters_title',
+    descKey:  'pro.feature_filters_desc',
+  },
+  {
     icon: 'analytics-outline',
     titleKey: 'pro.feature_analytics_title',
     descKey:  'pro.feature_analytics_desc',
   },
   {
-    icon: 'trending-up-outline',
-    titleKey: 'pro.feature_velocity_title',
-    descKey:  'pro.feature_velocity_desc',
-  },
-  {
     icon: 'shield-checkmark-outline',
     titleKey: 'pro.feature_difficulty_title',
     descKey:  'pro.feature_difficulty_desc',
-  },
-  {
-    icon: 'text-outline',
-    titleKey: 'pro.feature_input_title',
-    descKey:  'pro.feature_input_desc',
   },
 ];
 

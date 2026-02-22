@@ -8,6 +8,7 @@ const express = require("express");
 const router = express.Router();
 
 const requireAuth = require("../middleware/requireAuth");
+const loadPlan    = require("../middleware/loadPlan");
 
 // GET /api/practice/stats — загальна статистика для головного екрану
 // ВАЖЛИВО: цей маршрут ПЕРЕД /:listId, щоб "stats" не матчився як listId
@@ -488,13 +489,38 @@ router.post("/practice/result", requireAuth, async (req, res, next) => {
 });
 
 // POST /api/practice/session — зберегти завершену сесію повторення
-router.post("/practice/session", requireAuth, async (req, res, next) => {
+router.post("/practice/session", requireAuth, loadPlan, async (req, res, next) => {
   try {
     const supabase = req.supabase;
+    const ent      = req.entitlements;
     const { listId, wordCount, correctCount } = req.body;
 
     if (!listId) {
       return res.status(400).json({ error: "listId обов'язковий" });
+    }
+
+    // ── Check maxPracticeSessions/day (only for finite limits) ──────────────
+    if (isFinite(ent.maxPracticeSessions)) {
+      const todayStart = new Date();
+      todayStart.setUTCHours(0, 0, 0, 0);
+
+      const { count: sessionsToday, error: countErr } = await supabase
+        .from("practice_sessions")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", req.user.id)
+        .gte("completed_at", todayStart.toISOString());
+
+      if (countErr) throw countErr;
+
+      if (sessionsToday >= ent.maxPracticeSessions) {
+        return res.status(429).json({
+          error: `Досягнуто денний ліміт сесій (${ent.maxPracticeSessions}/день). Оновіться до Pro.`,
+          errorCode: "SESSIONS_LIMIT_REACHED",
+          limit: ent.maxPracticeSessions,
+          used: sessionsToday,
+          plan: req.plan,
+        });
+      }
     }
 
     const { data, error } = await supabase

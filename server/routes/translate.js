@@ -25,8 +25,8 @@ const supabase = require('../lib/supabase.server.cjs');
 // admin (service role) client: пишемо кеш words (bypasses RLS)
 const supabaseAdmin = require('../lib/supabase.admin.cjs');
 
-// Ліміти альтернатив по плану
-const MAX_ALTS = { free: 3, pro: 7 };
+// Централізовані entitlements (limits per plan)
+const { getEntitlements } = require('../config/entitlements');
 
 // GET /languages видалено — використовується routes/languages.js (з фільтрацією ALLOWED)
 
@@ -149,10 +149,27 @@ router.post('/translate', optionalAuth, async (req, res) => {
     const srcLang = String(source_lang || 'EN').trim().toUpperCase();
     const tgtLang = String(target_lang || 'UK').trim().toUpperCase();
 
-    // ── Валідація "переклад як навчальна дія" ──────────────────────────────────
-    const INPUT_PLAN_LIMITS = { free: { words: 6, chars: 80 }, pro: { words: 8, chars: 120 } };
+    // ── Entitlements (plan-based limits) ──────────────────────────────────────
     const userPlan   = req.subscriptionPlan || 'free';
-    const inputLimits = INPUT_PLAN_LIMITS[userPlan] || INPUT_PLAN_LIMITS.free;
+    const ent        = getEntitlements(userPlan);
+    const inputLimits = ent.inputLimits;
+
+    // ── AI quota check (only for authenticated users; anon → free, no counter) ─
+    if (req.user?.id) {
+      const todayUTC    = new Date().toISOString().slice(0, 10);
+      const currentCount = req.aiUsageToday ?? 0; // set by optionalAuth
+      if (currentCount >= ent.maxAiPerDay) {
+        return res.status(429).json({
+          error: `Daily AI limit reached (${ent.maxAiPerDay}/day). Upgrade to Pro for more.`,
+          errorCode: 'AI_LIMIT_REACHED',
+          limit: ent.maxAiPerDay,
+          used: currentCount,
+          plan: userPlan,
+        });
+      }
+    }
+
+    // ── Валідація "переклад як навчальна дія" ──────────────────────────────────
 
     // Евристика "схоже на речення" (до wordCount, щоб блокувати до кеш-перевірки)
     const SENTENCE_CHARS_RE = /[.!?;]|\n/;
@@ -334,7 +351,7 @@ router.post('/translate', optionalAuth, async (req, res) => {
       console.log(`✅ Збережено: "${cleanWord}" (${difficulty.cefr_level}, ${difficulty.difficulty_score}/100)`);
 
       // ─── Генеруємо альтернативні переклади ──────────────────────────────
-      const planLimit = MAX_ALTS[req.subscriptionPlan || 'free'] ?? 3;
+      const planLimit = ent.maxAltCount;
       const alternatives = await generateAndCacheAlternatives(
         saved,
         primaryTranslation,
@@ -348,6 +365,20 @@ router.post('/translate', optionalAuth, async (req, res) => {
     inflightSet(iKey, translatePromise);
 
     const result = await translatePromise;
+
+    // ── Increment AI counter (fire-and-forget, only for auth users, only on real AI hit) ─
+    if (req.user?.id && result._source === 'ai') {
+      const todayUTC   = new Date().toISOString().slice(0, 10);
+      const newCount   = (req.aiUsageToday ?? 0) + 1;
+      const userSupa   = req.supabase;
+      if (userSupa) {
+        userSupa
+          .from('profiles')
+          .upsert({ id: req.user.id, ai_requests_today: newCount, ai_reset_date: todayUTC }, { onConflict: 'id' })
+          .then(({ error: uErr }) => { if (uErr) console.warn('⚠️ AI counter upsert failed:', uErr.message); });
+      }
+    }
+
     return res.json(result);
 
   } catch (error) {
@@ -364,7 +395,7 @@ router.post('/translate', optionalAuth, async (req, res) => {
  */
 async function fetchCachedAlternatives(primaryWordId, subscriptionPlan) {
   try {
-    const planLimit = MAX_ALTS[subscriptionPlan || 'free'] ?? 3;
+    const planLimit = getEntitlements(subscriptionPlan || 'free').maxAltCount;
 
     const { data, error } = await supabase
       .from('word_alternatives')

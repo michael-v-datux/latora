@@ -379,6 +379,9 @@ export default function ProfileScreen({ navigation }) {
   const isPro  = plan === "pro";
   const streak = profileData?.streak ?? 0;
 
+  // Usage counters (for Free plan card)
+  const usage = profileData?.usage ?? null;
+
   // CEFR
   const cefrRaw  = profileData?.cefr_distribution ?? {};
   const cefrDist = CEFR_ORDER.reduce((acc, lvl) => {
@@ -456,6 +459,13 @@ export default function ProfileScreen({ navigation }) {
               <View style={styles.planTextWrap}>
                 <Text style={styles.planSublabel}>{t("profile.plan_label")}</Text>
                 <Text style={[styles.planName, { color: planCfg.color }]}>{planCfg.label}</Text>
+                {!isPro && usage && (
+                  <Text style={styles.planUsageRow}>
+                    {t("profile.usage_saves", { used: usage.saves_today ?? 0, max: usage.saves_limit ?? 10 })}
+                    {"  ·  "}
+                    {t("profile.usage_ai", { used: usage.ai_requests_today ?? 0, max: usage.ai_limit ?? 5 })}
+                  </Text>
+                )}
               </View>
               {!isPro && (
                 <View style={styles.planUpgradeChip}>
@@ -1073,6 +1083,7 @@ const styles = StyleSheet.create({
   planName:           { fontSize: 18, fontWeight: "700", marginTop: 1 },
   planUpgradeChip:    { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: "#ca8a04" },
   planUpgradeChipText:{ fontSize: 11, fontWeight: "700", color: "#ffffff", letterSpacing: 0.3 },
+  planUsageRow:       { fontSize: 11, color: COLORS.textMuted, marginTop: 3 },
 
   // ── Профіль ──
   profileCard: {

@@ -37,14 +37,20 @@ module.exports = async function optionalAuth(req, res, next) {
     req.user = data.user;
     req.supabase = supabase;
 
-    // Отримуємо план підписки
+    // Отримуємо план підписки + AI usage counters
     const { data: profile } = await supabase
       .from('profiles')
-      .select('subscription_plan')
+      .select('subscription_plan, ai_requests_today, ai_reset_date')
       .eq('id', data.user.id)
       .single();
 
-    req.subscriptionPlan = profile?.subscription_plan || 'free';
+    const plan        = profile?.subscription_plan || 'free';
+    const todayUTC    = new Date().toISOString().slice(0, 10);
+    const resetNeeded = !profile?.ai_reset_date || profile.ai_reset_date !== todayUTC;
+
+    req.subscriptionPlan = plan;
+    req.aiUsageToday     = resetNeeded ? 0 : (profile?.ai_requests_today ?? 0);
+    req.aiResetDate      = profile?.ai_reset_date ?? null;
 
   } catch (e) {
     // Будь-яка помилка — ігноруємо, продовжуємо як анонім

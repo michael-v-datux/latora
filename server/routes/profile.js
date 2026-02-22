@@ -61,10 +61,10 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
     const userId = req.user.id;
     const clientTz = req.query.tz || "UTC";
 
-    // ── 1. Профіль (план підписки) ──────────────────────────────────────────
+    // ── 1. Профіль (план підписки + usage counters) ──────────────────────────
     const { data: profileData, error: profileErr } = await supabase
       .from("profiles")
-      .select("id, subscription_plan, created_at, updated_at")
+      .select("id, subscription_plan, ai_requests_today, ai_reset_date, created_at, updated_at")
       .eq("id", userId)
       .single();
 
@@ -307,7 +307,31 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
           : null;
     }
 
-    // ── 10. Відповідь ────────────────────────────────────────────────────────
+    // ── 10. Saves today (for usage counter) ─────────────────────────────────
+    const todayUTCStart = new Date();
+    todayUTCStart.setUTCHours(0, 0, 0, 0);
+
+    let savesToday = 0;
+    if (listIds.length > 0) {
+      const { count: savesCount, error: savesErr } = await supabase
+        .from("list_words")
+        .select("id", { count: "exact", head: true })
+        .in("list_id", listIds)
+        .gte("added_at", todayUTCStart.toISOString());
+
+      if (!savesErr) savesToday = savesCount ?? 0;
+    }
+
+    // ── 11. Usage counters (reset AI if date changed) ────────────────────────
+    const { getEntitlements } = require("../config/entitlements");
+    const plan = profile.subscription_plan || "free";
+    const ent  = getEntitlements(plan);
+
+    const todayUTC = new Date().toISOString().slice(0, 10);
+    const aiResetNeeded = !profile.ai_reset_date || profile.ai_reset_date !== todayUTC;
+    const aiUsageToday  = aiResetNeeded ? 0 : (profile.ai_requests_today ?? 0);
+
+    // ── 12. Відповідь ────────────────────────────────────────────────────────
     return res.json({
       ...profile,
       streak,
@@ -319,6 +343,17 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
       mistake_heatmap: mistakeHeatmap,
       difficulty_overview: difficultyOverview,
       weakness_map: weaknessMap,
+      usage: {
+        plan,
+        ai_requests_today:  aiUsageToday,
+        ai_limit:           ent.maxAiPerDay,
+        saves_today:        savesToday,
+        saves_limit:        ent.maxSavesPerDay,
+        list_count:         listIds.length,
+        list_limit:         ent.maxLists,
+        total_words:        wordIds.length,
+        words_limit:        ent.maxTotalWords,
+      },
     });
   } catch (err) {
     next(err);

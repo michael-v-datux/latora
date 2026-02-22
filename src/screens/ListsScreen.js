@@ -88,9 +88,14 @@ const isIdiomatic = (item) => {
 };
 
 
+// CEFR levels for filter pills
+const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+const WORD_STATES = ['new', 'learning', 'stabilizing', 'mastered', 'decaying'];
+
 export default function ListsScreen({ navigation }) {
   const { t } = useI18n();
   const [lists, setLists] = useState([]);
+  const [listsUsage, setListsUsage] = useState(null); // { listCount, maxLists, plan }
   const [selectedList, setSelectedList] = useState(null);
   const [selectedWords, setSelectedWords] = useState([]);
   const [idiomViewById, setIdiomViewById] = useState({});
@@ -114,6 +119,12 @@ export default function ListsScreen({ navigation }) {
   const [newListName, setNewListName] = useState('');
   const [creatingList, setCreatingList] = useState(false);
 
+  // Filter state (for word list detail view)
+  const [cefrFilter, setCefrFilter] = useState([]); // [] = all
+  const [stateFilter, setStateFilter] = useState('all');
+  const [dueOnly, setDueOnly] = useState(false);
+  const [isPro, setIsPro] = useState(false);
+
   const totals = useMemo(() => {
     const totalWords = (lists || []).reduce((sum, l) => sum + (l.word_count || 0), 0);
     const totalLists = (lists || []).length;
@@ -127,11 +138,19 @@ export default function ListsScreen({ navigation }) {
   const loadLists = async (opts = { silent: false }) => {
     if (!opts.silent) setLoadingLists(true);
     try {
-      const [data, statusesData] = await Promise.all([
+      const [fetchedData, statusesData] = await Promise.all([
         fetchLists(),
         fetchListStatuses().catch(() => ({ statuses: {} })),
       ]);
-      setLists(Array.isArray(data) ? data : []);
+      // fetchLists now returns { lists, usage } (or legacy bare array)
+      const listsArr = Array.isArray(fetchedData)
+        ? fetchedData
+        : (fetchedData?.lists || []);
+      const usage = fetchedData?.usage ?? null;
+      setLists(listsArr);
+      setListsUsage(usage);
+      // Detect Pro plan from usage metadata
+      if (usage?.plan) setIsPro(usage.plan === 'pro');
       setListProgressMap(statusesData?.statuses || {});
     } catch (e) {
       console.warn('Failed to fetch lists:', e?.message);
@@ -148,6 +167,10 @@ export default function ListsScreen({ navigation }) {
     setLifetimeSessions(null);
     setBulkMode(false);
     setSelectedWordIds(new Set());
+    // Reset filters when opening a new list
+    setCefrFilter([]);
+    setStateFilter('all');
+    setDueOnly(false);
     try {
       const [details, sessionData] = await Promise.all([
         fetchListDetails(list.id),
@@ -334,6 +357,18 @@ export default function ListsScreen({ navigation }) {
 
   const selectedCount = selectedWordIds.size;
 
+  // ── Filtered words (client-side, Pro only; Free sees all words) ───────────────
+  const filteredWords = useMemo(() => {
+    const words = selectedWords || [];
+    if (!isPro) return words; // Free: no filtering
+    return words.filter((w) => {
+      if (cefrFilter.length > 0 && !cefrFilter.includes(w.cefr_level)) return false;
+      if (stateFilter !== 'all' && w.word_state !== stateFilter) return false;
+      if (dueOnly && !w.is_due) return false;
+      return true;
+    });
+  }, [selectedWords, isPro, cefrFilter, stateFilter, dueOnly]);
+
   const handleBulkDelete = () => {
     if (selectedCount === 0 || !selectedList) return;
     Alert.alert(
@@ -399,13 +434,17 @@ export default function ListsScreen({ navigation }) {
 
   // === Вигляд зі словами конкретного списку ===
   if (selectedList) {
-    const words = selectedWords || [];
+    const words = selectedWords || []; // all words (unfiltered)
+    const displayWords = filteredWords; // filtered for display
 
-    // Баг 1 (Lists): визначаємо чи є у списку слова з різних мовних пар
+    // Визначаємо чи є у списку слова з різних мовних пар
     const langPairs = new Set(
       words.map(w => `${(w.source_lang || '').toUpperCase()}→${(w.target_lang || '').toUpperCase()}`)
     );
     const hasMixedLangs = langPairs.size > 1;
+
+    // Check if any filter is active
+    const hasActiveFilter = cefrFilter.length > 0 || stateFilter !== 'all' || dueOnly;
 
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -447,7 +486,11 @@ export default function ListsScreen({ navigation }) {
               <Text style={styles.listTitle}>{selectedList.name}</Text>
               <View style={styles.listSubtitleRow}>
                 <Text style={styles.listSubtitle}>
-                  {loadingDetails ? 'Loading…' : formatWords(words.length)}
+                  {loadingDetails
+                    ? 'Loading…'
+                    : hasActiveFilter
+                      ? `${displayWords.length}/${words.length} words`
+                      : formatWords(words.length)}
                 </Text>
                 {!loadingDetails && hasMixedLangs && (
                   <View style={styles.mixedLangTag}>
@@ -457,6 +500,88 @@ export default function ListsScreen({ navigation }) {
               </View>
             </View>
           </View>
+
+          {/* ── Filter bar (Pro) or lock overlay (Free) ── */}
+          {!loadingDetails && words.length > 0 && !bulkMode && (
+            <View style={styles.filterSection}>
+              {isPro ? (
+                <>
+                  {/* CEFR pills */}
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
+                    {CEFR_LEVELS.map((lvl) => {
+                      const active = cefrFilter.includes(lvl);
+                      return (
+                        <TouchableOpacity
+                          key={lvl}
+                          style={[styles.filterPill, active && styles.filterPillActive]}
+                          onPress={() => {
+                            setCefrFilter((prev) =>
+                              prev.includes(lvl) ? prev.filter((l) => l !== lvl) : [...prev, lvl]
+                            );
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.filterPillText, active && styles.filterPillTextActive]}>
+                            {lvl}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                    <View style={styles.filterDivider} />
+                    {/* State filter */}
+                    {['all', ...WORD_STATES].map((st) => {
+                      const active = stateFilter === st;
+                      const label = st === 'all' ? t('lists.filter_all_states') : t(`word.state_${st}`);
+                      return (
+                        <TouchableOpacity
+                          key={st}
+                          style={[styles.filterPill, active && styles.filterPillActive]}
+                          onPress={() => setStateFilter(st)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.filterPillText, active && styles.filterPillTextActive]}>
+                            {label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                    <View style={styles.filterDivider} />
+                    {/* Due only toggle */}
+                    <TouchableOpacity
+                      style={[styles.filterPill, dueOnly && styles.filterPillActive]}
+                      onPress={() => setDueOnly((v) => !v)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.filterPillText, dueOnly && styles.filterPillTextActive]}>
+                        {t('lists.filter_due_only')}
+                      </Text>
+                    </TouchableOpacity>
+                    {/* Clear button */}
+                    {hasActiveFilter && (
+                      <TouchableOpacity
+                        style={styles.filterClearBtn}
+                        onPress={() => { setCefrFilter([]); setStateFilter('all'); setDueOnly(false); }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.filterClearText}>{t('lists.filter_clear')} ✕</Text>
+                      </TouchableOpacity>
+                    )}
+                  </ScrollView>
+                </>
+              ) : (
+                /* Free: locked filter bar */
+                <TouchableOpacity
+                  style={styles.filterLockBar}
+                  onPress={() => navigation.navigate('ProScreen')}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="lock-closed" size={13} color="#ca8a04" />
+                  <Text style={styles.filterLockText}>{t('lists.filter_pro_lock')}</Text>
+                  <Text style={styles.filterLockCta}>{t('lists.upgrade_cta')}</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
 
           {/* Practice info — тільки якщо у списку є слова */}
           {!loadingDetails && words.length > 0 && (
@@ -489,7 +614,7 @@ export default function ListsScreen({ navigation }) {
             </View>
           ) : (
             <FlatList
-              data={words}
+              data={displayWords}
               keyExtractor={(item) => item.id}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} />}
               ListEmptyComponent={() => (
@@ -682,15 +807,15 @@ export default function ListsScreen({ navigation }) {
               <TouchableOpacity
                 style={styles.bulkBarBtn}
                 onPress={() => {
-                  if (selectedWordIds.size === words.length) {
+                  if (selectedWordIds.size === displayWords.length) {
                     setSelectedWordIds(new Set());
                   } else {
-                    setSelectedWordIds(new Set(words.map((w) => w.id)));
+                    setSelectedWordIds(new Set(displayWords.map((w) => w.id)));
                   }
                 }}
               >
                 <Text style={styles.bulkBarText}>
-                  {selectedWordIds.size === words.length ? 'Unselect all' : 'Select all'}
+                  {selectedWordIds.size === displayWords.length ? 'Unselect all' : 'Select all'}
                 </Text>
               </TouchableOpacity>
 
@@ -780,9 +905,16 @@ export default function ListsScreen({ navigation }) {
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>My Lists</Text>
-          <Text style={styles.subtitle}>
-            {formatWords(totals.totalWords)} across {formatLists(totals.totalLists)}
-          </Text>
+          <View style={styles.subtitleRow}>
+            <Text style={styles.subtitle}>
+              {formatWords(totals.totalWords)} across {formatLists(totals.totalLists)}
+            </Text>
+            {listsUsage && (
+              <Text style={styles.usageChip}>
+                {t('lists.usage_lists', { used: listsUsage.listCount, max: listsUsage.maxLists })}
+              </Text>
+            )}
+          </View>
         </View>
 
         {loadingLists ? (
@@ -925,6 +1057,52 @@ const styles = StyleSheet.create({
   header: { paddingTop: SPACING.lg, paddingBottom: SPACING.xxl },
   title: { fontSize: 28, fontWeight: '400', color: COLORS.primary, letterSpacing: -0.5 },
   subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4 },
+  subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 4 },
+  usageChip: { fontSize: 11, color: COLORS.textHint, backgroundColor: COLORS.borderLight, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999 },
+
+  // Filter bar
+  filterSection: { marginBottom: 8 },
+  filterRow: { flexDirection: 'row' },
+  filterPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginRight: 6,
+    backgroundColor: COLORS.surface,
+  },
+  filterPillActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  filterPillText: { fontSize: 11, fontWeight: '600', color: COLORS.textSecondary },
+  filterPillTextActive: { color: '#ffffff' },
+  filterDivider: { width: 1, backgroundColor: COLORS.borderLight, marginHorizontal: 4, marginVertical: 4 },
+  filterClearBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    backgroundColor: '#fef2f2',
+    marginRight: 6,
+  },
+  filterClearText: { fontSize: 11, fontWeight: '600', color: '#dc2626' },
+  filterLockBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: '#fefce8',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    alignSelf: 'flex-start',
+  },
+  filterLockText: { fontSize: 11, color: '#92400e', fontWeight: '600' },
+  filterLockCta: { fontSize: 11, color: '#ca8a04', fontWeight: '700' },
 
   // List card
   listCard: {

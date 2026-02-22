@@ -11,9 +11,18 @@
 
 import { api } from "./apiClient";
 
+/**
+ * Returns { lists: [...], usage: { listCount, maxLists, plan } }
+ * For backwards compat, also exposes the raw response as-is.
+ */
 export async function fetchLists() {
   const res = await api.get("/lists");
-  return res.data;
+  // Server now returns { lists, usage } instead of a bare array
+  if (res.data && Array.isArray(res.data.lists)) {
+    return res.data; // { lists, usage }
+  }
+  // Fallback: old shape (bare array) — shouldn't happen after server update
+  return { lists: Array.isArray(res.data) ? res.data : [], usage: null };
 }
 
 export async function fetchListDetails(listId) {
