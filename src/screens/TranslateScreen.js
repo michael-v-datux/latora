@@ -335,7 +335,7 @@ const handleSwap = () => {
 
     Promise.all([fetchLists(), suggestList(histWord.id)])
       .then(([listsData, suggestion]) => {
-        setLists(Array.isArray(listsData) ? listsData : []);
+        setLists(Array.isArray(listsData) ? listsData : (listsData?.lists || []));
         if (suggestion?.suggested_list_id) {
           setSuggestedListId(suggestion.suggested_list_id);
           setSuggestedListName(suggestion.suggested_list_name || null);
@@ -410,7 +410,7 @@ const handleSwap = () => {
         const newList = await createList({ name: listName });
         // оновлюємо списки і одразу додаємо слово в новий
         const updated = await fetchLists();
-        setLists(Array.isArray(updated) ? updated : []);
+        setLists(Array.isArray(updated) ? updated : (updated?.lists || []));
         await handleAddToList(newList.id);
       } catch (e) {
         console.warn('Create list failed:', e?.message);
@@ -453,7 +453,7 @@ const handleSwap = () => {
 
     Promise.all([fetchLists(), suggestList(altWord.id)])
       .then(([listsData, suggestion]) => {
-        setLists(Array.isArray(listsData) ? listsData : []);
+        setLists(Array.isArray(listsData) ? listsData : (listsData?.lists || []));
         if (suggestion?.suggested_list_id) {
           setSuggestedListId(suggestion.suggested_list_id);
           setSuggestedListName(suggestion.suggested_list_name || null);

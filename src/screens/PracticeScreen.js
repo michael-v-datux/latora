@@ -230,7 +230,9 @@ export default function PracticeScreen({ route, navigation }) {
         fetchPracticeStats(),
         fetchListStatuses(),
       ]);
-      setLists(listsData || []);
+      // fetchLists now returns { lists, usage } — extract the array
+      const listsArr = Array.isArray(listsData) ? listsData : (listsData?.lists || []);
+      setLists(listsArr);
       setPracticeStats(statsData || { due: 0, mastered: 0, total: 0 });
       setListStatuses(statusesData?.statuses || {});
     } catch (e) {
