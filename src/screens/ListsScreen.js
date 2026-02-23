@@ -368,7 +368,9 @@ export default function ListsScreen({ navigation }) {
   const selectedCount = selectedWordIds.size;
 
   // ── Filtered words (client-side) ──────────────────────────────────────────────
-  // Search is available to all users; CEFR/state/due filters are Pro-only.
+  // Search:      all users
+  // CEFR filter: all users
+  // State/Due:   Pro only
   const filteredWords = useMemo(() => {
     let words = selectedWords || [];
 
@@ -383,11 +385,13 @@ export default function ListsScreen({ navigation }) {
       );
     }
 
-    // 2. Pro filters
+    // 2. CEFR filter (all users)
+    if (cefrFilter.length > 0) {
+      words = words.filter((w) => cefrFilter.includes(w.cefr_level));
+    }
+
+    // 3. Pro-only filters
     if (isPro) {
-      if (cefrFilter.length > 0) {
-        words = words.filter((w) => cefrFilter.includes(w.cefr_level));
-      }
       if (stateFilter !== 'all') {
         words = words.filter((w) => w.word_state === stateFilter);
       }
@@ -397,7 +401,7 @@ export default function ListsScreen({ navigation }) {
     }
 
     return words;
-  }, [selectedWords, searchQuery, isPro, cefrFilter, stateFilter, dueOnly]);
+  }, [selectedWords, searchQuery, cefrFilter, isPro, stateFilter, dueOnly]);
 
   const handleBulkDelete = () => {
     if (selectedCount === 0 || !selectedList) return;
@@ -531,34 +535,37 @@ export default function ListsScreen({ navigation }) {
             </View>
           </View>
 
-          {/* ── Filter bar (Pro) or lock overlay (Free) ── */}
+          {/* ── Filter bar ── */}
+          {/* CEFR: all users. State/Due: Pro only (with lock pill for Free). */}
           {!loadingDetails && words.length > 0 && !bulkMode && (
             <View style={styles.filterSection}>
-              {isPro ? (
-                <>
-                  {/* CEFR pills */}
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
-                    {CEFR_LEVELS.map((lvl) => {
-                      const active = cefrFilter.includes(lvl);
-                      return (
-                        <TouchableOpacity
-                          key={lvl}
-                          style={[styles.filterPill, active && styles.filterPillActive]}
-                          onPress={() => {
-                            setCefrFilter((prev) =>
-                              prev.includes(lvl) ? prev.filter((l) => l !== lvl) : [...prev, lvl]
-                            );
-                          }}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={[styles.filterPillText, active && styles.filterPillTextActive]}>
-                            {lvl}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                    <View style={styles.filterDivider} />
-                    {/* State filter */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
+                {/* CEFR pills — available to everyone */}
+                {CEFR_LEVELS.map((lvl) => {
+                  const active = cefrFilter.includes(lvl);
+                  return (
+                    <TouchableOpacity
+                      key={lvl}
+                      style={[styles.filterPill, active && styles.filterPillActive]}
+                      onPress={() => {
+                        setCefrFilter((prev) =>
+                          prev.includes(lvl) ? prev.filter((l) => l !== lvl) : [...prev, lvl]
+                        );
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.filterPillText, active && styles.filterPillTextActive]}>
+                        {lvl}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+
+                <View style={styles.filterDivider} />
+
+                {/* State + Due filters — Pro only */}
+                {isPro ? (
+                  <>
                     {['all', ...WORD_STATES].map((st) => {
                       const active = stateFilter === st;
                       const label = st === 'all' ? t('lists.filter_all_states') : t(`word.state_${st}`);
@@ -576,7 +583,6 @@ export default function ListsScreen({ navigation }) {
                       );
                     })}
                     <View style={styles.filterDivider} />
-                    {/* Due only toggle */}
                     <TouchableOpacity
                       style={[styles.filterPill, dueOnly && styles.filterPillActive]}
                       onPress={() => setDueOnly((v) => !v)}
@@ -586,30 +592,30 @@ export default function ListsScreen({ navigation }) {
                         {t('lists.filter_due_only')}
                       </Text>
                     </TouchableOpacity>
-                    {/* Clear button */}
-                    {hasActiveFilter && (
-                      <TouchableOpacity
-                        style={styles.filterClearBtn}
-                        onPress={() => { setCefrFilter([]); setStateFilter('all'); setDueOnly(false); }}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.filterClearText}>{t('lists.filter_clear')} ✕</Text>
-                      </TouchableOpacity>
-                    )}
-                  </ScrollView>
-                </>
-              ) : (
-                /* Free: locked filter bar */
-                <TouchableOpacity
-                  style={styles.filterLockBar}
-                  onPress={() => navigation.navigate('Profile', { screen: 'ProScreen' })}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="lock-closed" size={13} color="#ca8a04" />
-                  <Text style={styles.filterLockText}>{t('lists.filter_pro_lock')}</Text>
-                  <Text style={styles.filterLockCta}>{t('lists.upgrade_cta')}</Text>
-                </TouchableOpacity>
-              )}
+                  </>
+                ) : (
+                  /* Free: locked pill for advanced filters */
+                  <TouchableOpacity
+                    style={styles.filterLockPill}
+                    onPress={() => navigation.navigate('Profile', { screen: 'ProScreen' })}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="lock-closed" size={11} color="#ca8a04" />
+                    <Text style={styles.filterLockPillText}>{t('lists.filter_advanced_lock')}</Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Clear button — shown when any filter is active */}
+                {hasActiveFilter && (
+                  <TouchableOpacity
+                    style={styles.filterClearBtn}
+                    onPress={() => { setCefrFilter([]); setStateFilter('all'); setDueOnly(false); }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.filterClearText}>{t('lists.filter_clear')} ✕</Text>
+                  </TouchableOpacity>
+                )}
+              </ScrollView>
             </View>
           )}
 
@@ -1275,6 +1281,21 @@ const styles = StyleSheet.create({
   },
   filterLockText: { fontSize: 11, color: '#92400e', fontWeight: '600' },
   filterLockCta: { fontSize: 11, color: '#ca8a04', fontWeight: '700' },
+
+  // Compact lock pill (inline in filter row, for Free users)
+  filterLockPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: '#fefce8',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    marginRight: 4,
+  },
+  filterLockPillText: { fontSize: 11, color: '#ca8a04', fontWeight: '600' },
 
   // List card
   listCard: {

@@ -37,13 +37,18 @@ import {
   restorePurchases,
 } from '../services/purchaseService';
 
-// ─── Feature list (what Pro includes) ────────────────────────────────────────
+// ─── Feature list (what Pro unlocks/upgrades) ────────────────────────────────
 
 const PRO_FEATURES = [
   {
-    icon: 'layers-outline',
-    titleKey: 'pro.feature_alts_title',
-    descKey:  'pro.feature_alts_desc',
+    icon: 'today-outline',
+    titleKey: 'pro.feature_plan_title',
+    descKey:  'pro.feature_plan_desc',
+  },
+  {
+    icon: 'flash-outline',
+    titleKey: 'pro.feature_ai_title',
+    descKey:  'pro.feature_ai_desc',
   },
   {
     icon: 'save-outline',
@@ -51,9 +56,9 @@ const PRO_FEATURES = [
     descKey:  'pro.feature_saves_desc',
   },
   {
-    icon: 'flash-outline',
-    titleKey: 'pro.feature_ai_title',
-    descKey:  'pro.feature_ai_desc',
+    icon: 'layers-outline',
+    titleKey: 'pro.feature_alts_title',
+    descKey:  'pro.feature_alts_desc',
   },
   {
     icon: 'folder-outline',
@@ -71,6 +76,11 @@ const PRO_FEATURES = [
     descKey:  'pro.feature_filters_desc',
   },
   {
+    icon: 'bar-chart-outline',
+    titleKey: 'pro.feature_wordstats_title',
+    descKey:  'pro.feature_wordstats_desc',
+  },
+  {
     icon: 'analytics-outline',
     titleKey: 'pro.feature_analytics_title',
     descKey:  'pro.feature_analytics_desc',
@@ -80,6 +90,19 @@ const PRO_FEATURES = [
     titleKey: 'pro.feature_difficulty_title',
     descKey:  'pro.feature_difficulty_desc',
   },
+];
+
+// ─── Free plan: what's included (so users feel value, not deprivation) ────────
+
+const FREE_INCLUDES = [
+  { icon: 'today-outline',     key: 'pro.free_plan'      },
+  { icon: 'flash-outline',     key: 'pro.free_ai'        },
+  { icon: 'save-outline',      key: 'pro.free_saves'     },
+  { icon: 'folder-outline',    key: 'pro.free_lists'     },
+  { icon: 'fitness-outline',   key: 'pro.free_practice'  },
+  { icon: 'search-outline',    key: 'pro.free_search'    },
+  { icon: 'filter-outline',    key: 'pro.free_cefr'      },
+  { icon: 'bar-chart-outline', key: 'pro.free_wordstats' },
 ];
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -289,6 +312,17 @@ export default function ProScreen({ navigation }) {
           ))}
         </View>
 
+        {/* ── Free plan comparison card ── */}
+        <View style={styles.freeCard}>
+          <Text style={styles.freeCardHeader}>{t('pro.free_section_title')}</Text>
+          {FREE_INCLUDES.map((item) => (
+            <View key={item.key} style={styles.freeRow}>
+              <Ionicons name={item.icon} size={15} color={COLORS.textSecondary} style={styles.freeRowIcon} />
+              <Text style={styles.freeRowText}>{t(item.key)}</Text>
+            </View>
+          ))}
+        </View>
+
         {/* ── Plan selector or loading ── */}
         {noKey ? (
           <NoKeyPlaceholder t={t} onBack={() => navigation.goBack()} />
@@ -482,6 +516,40 @@ const styles = StyleSheet.create({
   featureDesc: {
     fontSize: 13,
     color: COLORS.textSecondary,
+    lineHeight: 18,
+  },
+
+  // ── Free includes card ──
+  freeCard: {
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.lg,
+    backgroundColor: COLORS.surface,
+    borderRadius: BORDER_RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: SPACING.lg,
+  },
+  freeCardHeader: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: SPACING.sm,
+  },
+  freeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+  },
+  freeRowIcon: {
+    marginRight: SPACING.sm,
+    width: 18,
+  },
+  freeRowText: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    flex: 1,
     lineHeight: 18,
   },
 
