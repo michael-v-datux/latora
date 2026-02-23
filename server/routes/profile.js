@@ -5,11 +5,13 @@
  *                      + word_state_distribution + vocab_growth + vocab_velocity
  *                      + review_activity + difficulty_overview + weakness_map
  *                      + skill_profile (ALE factor scores)
+ *                      + language_stats (pair counts, role breakdown — рівні A/B/C)
  */
 
 const express = require("express");
 const router = express.Router();
 const requireAuth = require("../middleware/requireAuth");
+const { baseLang, normalizePair } = require("../lib/langUtils");
 
 // ─── Хелпер: обчислити стрік (consecutive practice days) ───────────────────
 function computeStreak(sessions, clientTz) {
@@ -100,7 +102,7 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
     if (listIds.length > 0) {
       const { data: lwResult, error: lwErr } = await supabase
         .from("list_words")
-        .select("word_id, added_at, words(cefr_level)")
+        .select("word_id, added_at, words(cefr_level, source_lang, target_lang)")
         .in("list_id", listIds);
 
       if (lwErr) throw lwErr;
@@ -141,10 +143,10 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
             .gte("added_at", thirtyDaysAgo.toISOString())
         : Promise.resolve({ data: [] }),
 
-      // practice_events: результати для review activity + heatmap (30 днів)
+      // practice_events: результати для review activity + heatmap + language stats (30 днів)
       supabase
         .from("practice_events")
-        .select("result, created_at")
+        .select("result, created_at, source_lang, target_lang, prompt_side")
         .eq("user_id", userId)
         .gte("created_at", thirtyDaysAgo.toISOString()),
 
@@ -342,6 +344,132 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
     // ── 12. Skill profile (ALE) ───────────────────────────────────────────────
     const skillProfile = skillProfileRes?.data ?? null;
 
+    // ── 12b. Language stats (рівні A / B / C) ────────────────────────────────
+    // Level A — Pair counts (кількість слів у кожній мовній парі)
+    // Level B1 — Involved counts (скільки слів містять кожну мову)
+    // Level B2 / C / KPI — тільки для Pro (analyticsLevel === 'full')
+    const { getEntitlements: _getEnt } = require("../config/entitlements");
+    const _ent = _getEnt(plan);
+    const isFullAnalytics = _ent.analyticsLevel === 'full';
+
+    // --- A & B1: обчислюємо з list_words → words (вже є в lwData) ---
+    const pairWordCount  = {};   // { "EN|UK": 120, "PL|DE": 30 }
+    const langInvolved   = {};   // { "EN": 150, "UK": 120, "PL": 30, "DE": 30 }
+
+    for (const lw of lwData) {
+      const src = lw.words?.source_lang ? baseLang(lw.words.source_lang) : null;
+      const tgt = lw.words?.target_lang ? baseLang(lw.words.target_lang) : null;
+      if (!src || !tgt) continue;
+
+      const pairKey = normalizePair(src, tgt);
+      pairWordCount[pairKey] = (pairWordCount[pairKey] || 0) + 1;
+
+      langInvolved[src] = (langInvolved[src] || 0) + 1;
+      langInvolved[tgt] = (langInvolved[tgt] || 0) + 1;
+    }
+
+    // Level A: масив пар з кількістю слів
+    const pairStats = Object.entries(pairWordCount).map(([pair, wordCount]) => {
+      const [langA, langB] = pair.split('|');
+      return { pair, lang_a: langA, lang_b: langB, word_count: wordCount };
+    }).sort((a, b) => b.word_count - a.word_count);
+
+    // Level B1: масив мов з кількістю слів (де ця мова задіяна)
+    const langStats = Object.entries(langInvolved).map(([lang, count]) => ({
+      lang,
+      word_count: count,
+    })).sort((a, b) => b.word_count - a.word_count);
+
+    // --- B2 / C / KPI: тільки Pro — з practice_events за 30 днів ---
+    // Для Free — повертаємо тільки рівні A та B1
+    let pairPracticeStats = null;  // B2: { "EN|UK": { total7: N, total30: N, correct7: N, correct30: N } }
+    let roleStats         = null;  // C:  { "EN": { as_source: N, as_target: N, acc_source: %, acc_target: % } }
+
+    if (isFullAnalytics && eventsRes.data?.length > 0) {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+      sevenDaysAgo.setHours(0, 0, 0, 0);
+
+      const pairPractice = {};  // { pairKey: { t30, c30, t7, c7 } }
+      const rolePractice = {};  // { lang: { as_source: {total, correct}, as_target: {total, correct} } }
+
+      for (const ev of eventsRes.data) {
+        const src = ev.source_lang ? baseLang(ev.source_lang) : null;
+        const tgt = ev.target_lang ? baseLang(ev.target_lang) : null;
+        if (!src || !tgt) continue;
+
+        const pairKey = normalizePair(src, tgt);
+        if (!pairPractice[pairKey]) pairPractice[pairKey] = { t30: 0, c30: 0, t7: 0, c7: 0 };
+        pairPractice[pairKey].t30++;
+        if (ev.result === true) pairPractice[pairKey].c30++;
+
+        const evDate = new Date(ev.created_at);
+        if (evDate >= sevenDaysAgo) {
+          pairPractice[pairKey].t7++;
+          if (ev.result === true) pairPractice[pairKey].c7++;
+        }
+
+        // Role-level: тільки якщо prompt_side відомий
+        if (ev.prompt_side === 'source' || ev.prompt_side === 'target') {
+          // prompt_side = 'source' → юзер бачив source, вгадував target → перевіряємо target
+          // prompt_side = 'target' → юзер бачив target, вгадував source → перевіряємо source
+          // Для ролі "producing": мова виступає як TARGET (юзер має її відтворити)
+          // source_lang as_source: prompt='source' → juzer бачить src, продукує tgt → src=passive role
+          // Спрощення: as_source = кількість разів ця мова була SOURCE у practice_events
+          for (const lang of [src, tgt]) {
+            if (!rolePractice[lang]) {
+              rolePractice[lang] = {
+                as_source:  { total: 0, correct: 0 },
+                as_target:  { total: 0, correct: 0 },
+              };
+            }
+          }
+          const isCorrect = ev.result === true;
+          // Source lang as_source
+          rolePractice[src].as_source.total++;
+          if (isCorrect) rolePractice[src].as_source.correct++;
+          // Target lang as_target
+          rolePractice[tgt].as_target.total++;
+          if (isCorrect) rolePractice[tgt].as_target.correct++;
+        }
+      }
+
+      // B2: serialize pair practice activity
+      pairPracticeStats = Object.entries(pairPractice).map(([pair, v]) => {
+        const [langA, langB] = pair.split('|');
+        return {
+          pair, lang_a: langA, lang_b: langB,
+          practice_30d: v.t30,
+          correct_30d:  v.c30,
+          accuracy_30d: v.t30 > 0 ? Math.round((v.c30 / v.t30) * 100) : null,
+          practice_7d:  v.t7,
+          correct_7d:   v.c7,
+          accuracy_7d:  v.t7  > 0 ? Math.round((v.c7 / v.t7)   * 100) : null,
+        };
+      }).sort((a, b) => b.practice_30d - a.practice_30d);
+
+      // C: role stats per language
+      roleStats = Object.entries(rolePractice).map(([lang, roles]) => ({
+        lang,
+        as_source_total:   roles.as_source.total,
+        as_source_acc_pct: roles.as_source.total > 0
+          ? Math.round((roles.as_source.correct / roles.as_source.total) * 100)
+          : null,
+        as_target_total:   roles.as_target.total,
+        as_target_acc_pct: roles.as_target.total > 0
+          ? Math.round((roles.as_target.correct / roles.as_target.total) * 100)
+          : null,
+      })).sort((a, b) => (b.as_source_total + b.as_target_total) - (a.as_source_total + a.as_target_total));
+    }
+
+    const languageStats = {
+      analytics_level:    isFullAnalytics ? 'full' : 'basic',
+      pair_word_counts:   pairStats,           // Level A — Free
+      lang_involved:      langStats,           // Level B1 — Free
+      pair_practice:      pairPracticeStats,   // Level B2 — Pro (null for Free)
+      role_stats:         roleStats,           // Level C — Pro (null for Free)
+    };
+
     // ── 13. Відповідь ────────────────────────────────────────────────────────
     return res.json({
       ...profile,
@@ -355,6 +483,7 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
       difficulty_overview: difficultyOverview,
       weakness_map: weaknessMap,
       skill_profile: skillProfile,
+      language_stats: languageStats,
       usage: {
         plan,
         ai_requests_today:  aiUsageToday,

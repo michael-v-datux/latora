@@ -10,6 +10,7 @@ const router = express.Router();
 const requireAuth = require("../middleware/requireAuth");
 const loadPlan    = require("../middleware/loadPlan");
 const { updateSkillProfile } = require("../lib/skillScoring");
+const { baseLang } = require("../lib/langUtils");
 
 // GET /api/practice/stats — загальна статистика для головного екрану
 // ВАЖЛИВО: цей маршрут ПЕРЕД /:listId, щоб "stats" не матчився як listId
@@ -363,7 +364,7 @@ const VALID_QUALITIES = new Set(['forgot', 'hard', 'good', 'easy']);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isUUID(v) { return typeof v === 'string' && UUID_RE.test(v); }
 
-function validatePracticeResult({ wordId, quality, newProgress, sessionId, listId, answerTimeMs }) {
+function validatePracticeResult({ wordId, quality, newProgress, sessionId, listId, answerTimeMs, sourceLang, targetLang, promptSide }) {
   const errors = [];
 
   if (!isUUID(wordId))                           errors.push("wordId має бути UUID");
@@ -417,6 +418,20 @@ function validatePracticeResult({ wordId, quality, newProgress, sessionId, listI
     }
   }
 
+  // sourceLang / targetLang — якщо є, то рядок 2–10 символів
+  if (sourceLang != null && (typeof sourceLang !== 'string' || sourceLang.length < 2 || sourceLang.length > 10)) {
+    errors.push("sourceLang має бути рядком 2–10 символів");
+  }
+  if (targetLang != null && (typeof targetLang !== 'string' || targetLang.length < 2 || targetLang.length > 10)) {
+    errors.push("targetLang має бути рядком 2–10 символів");
+  }
+
+  // promptSide — якщо є, то 'source' або 'target'
+  const VALID_SIDES = new Set(['source', 'target']);
+  if (promptSide != null && !VALID_SIDES.has(promptSide)) {
+    errors.push("promptSide має бути 'source' або 'target'");
+  }
+
   return errors;
 }
 
@@ -428,13 +443,16 @@ router.post("/practice/result", requireAuth, async (req, res, next) => {
       wordId,
       quality,
       newProgress,
-      sessionId   = null,   // опційний FK на practice_sessions
-      listId      = null,   // опційний FK на lists
+      sessionId    = null,  // опційний FK на practice_sessions
+      listId       = null,  // опційний FK на lists
       answerTimeMs = null,  // час відповіді (мс)
+      sourceLang   = null,  // мова оригіналу (нормалізована, напр. "EN")
+      targetLang   = null,  // мова перекладу (нормалізована, напр. "UK")
+      promptSide   = null,  // що показували юзеру: 'source' або 'target'
     } = req.body;
 
     // ── Серверна валідація payload ──────────────────────────────────────────
-    const validationErrors = validatePracticeResult({ wordId, quality, newProgress, sessionId, listId, answerTimeMs });
+    const validationErrors = validatePracticeResult({ wordId, quality, newProgress, sessionId, listId, answerTimeMs, sourceLang, targetLang, promptSide });
     if (validationErrors.length > 0) {
       return res.status(400).json({ error: validationErrors[0], details: validationErrors });
     }
@@ -469,15 +487,23 @@ router.post("/practice/result", requireAuth, async (req, res, next) => {
 
     // ── 2. Логуємо practice_event (fire-and-forget, не блокуємо відповідь) ─
     const isCorrect = quality !== "forgot";
+
+    // Нормалізуємо мовні коди (базова форма: EN-GB → EN)
+    const normSrcLang = sourceLang ? baseLang(sourceLang) : null;
+    const normTgtLang = targetLang ? baseLang(targetLang) : null;
+
     supabase
       .from("practice_events")
       .insert({
-        user_id:       userId,
-        session_id:    sessionId,
-        word_id:       wordId,
-        list_id:       listId,
-        result:        isCorrect,
+        user_id:        userId,
+        session_id:     sessionId,
+        word_id:        wordId,
+        list_id:        listId,
+        result:         isCorrect,
         answer_time_ms: answerTimeMs,
+        source_lang:    normSrcLang,
+        target_lang:    normTgtLang,
+        prompt_side:    promptSide,
       })
       .then(({ error: evErr }) => {
         if (evErr) console.warn("⚠️ practice_events insert failed:", evErr.message);

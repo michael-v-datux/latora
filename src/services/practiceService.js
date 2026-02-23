@@ -44,6 +44,9 @@ export async function submitPracticeResult(wordId, quality, newProgress, opts = 
     sessionId:    opts.sessionId    ?? null,
     listId:       opts.listId       ?? null,
     answerTimeMs: opts.answerTimeMs ?? null,
+    sourceLang:   opts.sourceLang   ?? null,
+    targetLang:   opts.targetLang   ?? null,
+    promptSide:   opts.promptSide   ?? null,
   });
   return res.data;
 }

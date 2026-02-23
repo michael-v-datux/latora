@@ -509,8 +509,12 @@ export default function PracticeScreen({ route, navigation }) {
     // Зберегти результат на сервері (fire-and-forget, але збираємо promises для refresh)
     const p = submitPracticeResult(word.id, quality, newProgress, {
       sessionId,
-      listId: selectedList?.id ?? null,
+      listId:     selectedList?.id ?? null,
       answerTimeMs,
+      sourceLang: word.source_lang ?? null,
+      targetLang: word.target_lang ?? null,
+      // Всі поточні difficulty режими (1–4) показують оригінал → юзер вгадує переклад
+      promptSide: 'source',
     }).then(res => {
       // Якщо сесія ще не є — отримаємо id після першого збереження (поки не потрібно)
     }).catch(e => {

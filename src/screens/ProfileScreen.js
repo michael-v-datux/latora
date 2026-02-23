@@ -75,12 +75,13 @@ function formatDayLabel(dateStr) {
 
 // ─── Підкомпоненти ────────────────────────────────────────────────────────────
 
-/** Горизонтальний tab-switcher (Overview / Activity / Difficulty) */
+/** Горизонтальний tab-switcher (Overview / Activity / Difficulty / Languages) */
 function TabSwitcherBar({ active, onChange, t }) {
   const tabs = [
     { key: "overview",   label: t("profile.tab_overview")   },
     { key: "activity",   label: t("profile.tab_activity")   },
     { key: "difficulty", label: t("profile.tab_difficulty") },
+    { key: "languages",  label: t("profile.tab_languages")  },
   ];
   return (
     <View style={styles.tabBar}>
@@ -477,6 +478,15 @@ export default function ProfileScreen({ navigation }) {
   // ALE Skill Profile (all users — data is public, engine is Pro)
   const skillProfile = profileData?.skill_profile ?? null;
   const hasSkillData = skillProfile && (skillProfile.total_updates ?? 0) > 0;
+
+  // Language Stats (pair + role analytics)
+  const languageStats   = profileData?.language_stats ?? null;
+  const pairWordCounts  = languageStats?.pair_word_counts  ?? [];   // Level A — always
+  const langInvolved    = languageStats?.lang_involved     ?? [];   // Level B1 — always
+  const pairPractice    = languageStats?.pair_practice     ?? null; // Level B2 — Pro
+  const roleStats       = languageStats?.role_stats        ?? null; // Level C — Pro
+  const hasLangData     = pairWordCounts.length > 0;
+  const isFullAnalytics = languageStats?.analytics_level === 'full';
 
   // Mistake Heatmap (30 днів)
   const mistakeHeatmap30 = profileData?.mistake_heatmap ?? [];
@@ -1053,6 +1063,145 @@ export default function ProfileScreen({ navigation }) {
           </View>
         )}
 
+        {/* ── Tab: Languages ── */}
+        {activeTab === "languages" && (
+          <>
+            {loading ? (
+              <View style={styles.card}>
+                <ActivityIndicator size="small" color={COLORS.textMuted} />
+              </View>
+            ) : !hasLangData ? (
+              <EmptyTabState
+                icon="🌍"
+                title={t("profile.lang_empty_title")}
+                subtitle={t("profile.lang_empty_sub")}
+                btnLabel={t("profile.streak_empty_btn")}
+                onBtnPress={() => navigation.navigate("Practice")}
+              />
+            ) : (
+              <>
+                {/* ── Level A: Pair word counts (Free) ── */}
+                <View style={styles.card}>
+                  <Text style={styles.sectionLabel}>{t("profile.lang_pairs_section")}</Text>
+                  {pairWordCounts.map((pair) => (
+                    <View key={pair.pair} style={styles.langPairRow}>
+                      <View style={styles.langPairBadge}>
+                        <Text style={styles.langPairBadgeText}>{pair.lang_a}</Text>
+                        <Text style={styles.langPairSep}>↔</Text>
+                        <Text style={styles.langPairBadgeText}>{pair.lang_b}</Text>
+                      </View>
+                      <View style={styles.langPairStats}>
+                        <Text style={styles.langPairCount}>{pair.word_count}</Text>
+                        <Text style={styles.langPairCountLabel}>{t("profile.lang_words_label")}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+
+                {/* ── Level B1: Languages involved (Free) ── */}
+                {langInvolved.length > 1 && (
+                  <View style={styles.card}>
+                    <Text style={styles.sectionLabel}>{t("profile.lang_involved_section")}</Text>
+                    {langInvolved.map((item) => {
+                      const pct = hasLangData
+                        ? Math.round((item.word_count / (langInvolved[0]?.word_count || 1)) * 100)
+                        : 0;
+                      return (
+                        <View key={item.lang} style={{ marginBottom: 10 }}>
+                          <View style={styles.langInvolvedRow}>
+                            <Text style={styles.langCode}>{item.lang}</Text>
+                            <View style={styles.langTrack}>
+                              <View style={[styles.langFill, { width: `${pct}%` }]} />
+                            </View>
+                            <Text style={styles.langCount}>{item.word_count}</Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+
+                {/* ── Level B2 + C: Practice activity (Pro only) ── */}
+                {isFullAnalytics && pairPractice && pairPractice.length > 0 ? (
+                  <View style={styles.card}>
+                    <Text style={styles.sectionLabel}>{t("profile.lang_practice_section")}</Text>
+                    {pairPractice.map((pair) => (
+                      <View key={pair.pair} style={styles.langActivityRow}>
+                        <View style={styles.langPairBadgeSmall}>
+                          <Text style={styles.langPairBadgeTextSmall}>{pair.lang_a}↔{pair.lang_b}</Text>
+                        </View>
+                        <View style={styles.langActivityStats}>
+                          <View style={styles.langActivityCell}>
+                            <Text style={styles.langActivityNum}>{pair.practice_7d}</Text>
+                            <Text style={styles.langActivityLabel}>{t("profile.lang_7d")}</Text>
+                          </View>
+                          <View style={styles.langActivityCell}>
+                            <Text style={styles.langActivityNum}>{pair.practice_30d}</Text>
+                            <Text style={styles.langActivityLabel}>{t("profile.lang_30d")}</Text>
+                          </View>
+                          <View style={styles.langActivityCell}>
+                            <Text style={[
+                              styles.langActivityNum,
+                              pair.accuracy_30d != null && pair.accuracy_30d >= 70 ? { color: "#16a34a" } :
+                              pair.accuracy_30d != null && pair.accuracy_30d < 50  ? { color: "#dc2626" } :
+                              { color: "#ca8a04" }
+                            ]}>
+                              {pair.accuracy_30d != null ? `${pair.accuracy_30d}%` : "—"}
+                            </Text>
+                            <Text style={styles.langActivityLabel}>{t("profile.lang_accuracy")}</Text>
+                          </View>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                ) : !isFullAnalytics ? (
+                  <LockedProBlock t={t} label={t("profile.lang_pro_lock")} onUnlock={openProScreen} />
+                ) : null}
+
+                {/* ── Level C: Role breakdown (Pro only) ── */}
+                {isFullAnalytics && roleStats && roleStats.length > 0 && (
+                  <View style={styles.card}>
+                    <Text style={styles.sectionLabel}>{t("profile.lang_role_section")}</Text>
+                    <Text style={styles.weaknessHint}>{t("profile.lang_role_hint")}</Text>
+                    {roleStats.map((item) => (
+                      <View key={item.lang} style={styles.langRoleRow}>
+                        <Text style={styles.langRoleCode}>{item.lang}</Text>
+                        <View style={styles.langRoleCols}>
+                          <View style={styles.langRoleCol}>
+                            <Text style={styles.langRoleNum}>{item.as_source_total}</Text>
+                            <Text style={styles.langRoleLabel}>{t("profile.lang_role_source")}</Text>
+                            {item.as_source_acc_pct != null && (
+                              <Text style={[
+                                styles.langRoleAcc,
+                                item.as_source_acc_pct >= 70 ? { color: "#16a34a" } :
+                                item.as_source_acc_pct < 50  ? { color: "#dc2626" } :
+                                { color: "#ca8a04" }
+                              ]}>{item.as_source_acc_pct}%</Text>
+                            )}
+                          </View>
+                          <View style={styles.langRoleDiv} />
+                          <View style={styles.langRoleCol}>
+                            <Text style={styles.langRoleNum}>{item.as_target_total}</Text>
+                            <Text style={styles.langRoleLabel}>{t("profile.lang_role_target")}</Text>
+                            {item.as_target_acc_pct != null && (
+                              <Text style={[
+                                styles.langRoleAcc,
+                                item.as_target_acc_pct >= 70 ? { color: "#16a34a" } :
+                                item.as_target_acc_pct < 50  ? { color: "#dc2626" } :
+                                { color: "#ca8a04" }
+                              ]}>{item.as_target_acc_pct}%</Text>
+                            )}
+                          </View>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </>
+            )}
+          </>
+        )}
+
         {/* ── 8. Settings nav row ── */}
         <View style={styles.settingsCard}>
           <TouchableOpacity
@@ -1310,6 +1459,38 @@ const styles = StyleSheet.create({
   settingBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.borderLight },
   settingLeft:   { flexDirection: "row", alignItems: "center", gap: 12 },
   settingLabel:  { fontSize: 14, color: COLORS.textSecondary },
+
+  // ── Language tab ──
+  langPairRow:         { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.borderLight },
+  langPairBadge:       { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "#eff6ff", borderRadius: BORDER_RADIUS.sm, paddingHorizontal: 10, paddingVertical: 5 },
+  langPairBadgeText:   { fontSize: 13, fontWeight: "700", color: COLORS.primary, letterSpacing: 0.5 },
+  langPairSep:         { fontSize: 12, color: COLORS.textMuted },
+  langPairStats:       { alignItems: "flex-end" },
+  langPairCount:       { fontSize: 18, fontWeight: "700", color: COLORS.primary },
+  langPairCountLabel:  { fontSize: 10, color: COLORS.textMuted, marginTop: 1 },
+
+  langInvolvedRow:     { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 2 },
+  langCode:            { fontSize: 12, fontWeight: "700", color: COLORS.primary, width: 28, letterSpacing: 0.5 },
+  langTrack:           { flex: 1, height: 8, backgroundColor: COLORS.borderLight, borderRadius: 4, overflow: "hidden" },
+  langFill:            { height: 8, backgroundColor: COLORS.primary, borderRadius: 4 },
+  langCount:           { fontSize: 12, color: COLORS.textMuted, width: 32, textAlign: "right" },
+
+  langActivityRow:     { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.borderLight },
+  langPairBadgeSmall:  { marginBottom: 6 },
+  langPairBadgeTextSmall: { fontSize: 12, fontWeight: "700", color: COLORS.primary, letterSpacing: 0.5 },
+  langActivityStats:   { flexDirection: "row", gap: 16 },
+  langActivityCell:    { alignItems: "center", minWidth: 48 },
+  langActivityNum:     { fontSize: 16, fontWeight: "700", color: COLORS.primary },
+  langActivityLabel:   { fontSize: 9, color: COLORS.textMuted, marginTop: 2, textTransform: "uppercase", letterSpacing: 0.4 },
+
+  langRoleRow:         { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: COLORS.borderLight },
+  langRoleCode:        { fontSize: 13, fontWeight: "700", color: COLORS.primary, marginBottom: 8, letterSpacing: 0.5 },
+  langRoleCols:        { flexDirection: "row", alignItems: "center" },
+  langRoleCol:         { flex: 1, alignItems: "center" },
+  langRoleDiv:         { width: 1, height: 36, backgroundColor: COLORS.borderLight },
+  langRoleNum:         { fontSize: 18, fontWeight: "700", color: COLORS.primary },
+  langRoleLabel:       { fontSize: 9, color: COLORS.textMuted, marginTop: 2, textTransform: "uppercase", letterSpacing: 0.4 },
+  langRoleAcc:         { fontSize: 12, fontWeight: "600", marginTop: 2 },
 
 });
 
