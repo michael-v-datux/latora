@@ -1046,13 +1046,12 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    marginTop: SPACING.sm,
-    fontSize: 18,
-    lineHeight: 26,
+    fontSize: 17,
+    lineHeight: 24,
     color: COLORS.primary,
     fontWeight: '400',
     letterSpacing: -0.3,
-    paddingVertical: 6,
+    paddingVertical: 0,
     textAlignVertical: 'top',
   },
   inputCounterRow: {
@@ -1206,18 +1205,17 @@ swapBtn: {
 },
 inputWrap: {
   flexDirection: 'row',
-  alignItems: 'flex-start',
+  alignItems: 'center',
   borderWidth: 1,
   borderColor: COLORS.border,
   borderRadius: BORDER_RADIUS.md,
   backgroundColor: COLORS.surface,
   paddingHorizontal: SPACING.md,
-  paddingVertical: 4,
-  minHeight: 44,
+  paddingVertical: 12,
 },
 clearBtn: {
   marginLeft: 8,
-  marginTop: 10,
+  alignSelf: 'center',
 },
 primaryBtn: {
   marginTop: SPACING.md,
