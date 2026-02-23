@@ -156,7 +156,8 @@
     "limit_lists": "List limit reached ({{max}} max on Free). Upgrade to Pro for up to 50 lists.",
     "limit_words": "Word limit reached ({{max}} max on Free). Upgrade to Pro for up to 10,000 words.",
     "limit_saves": "Daily save limit reached ({{max}}/day on Free). Upgrade to Pro for 150 saves/day.",
-    "upgrade_cta": "Upgrade to Pro →"
+    "upgrade_cta": "Upgrade to Pro →",
+    "search_placeholder": "Search words…"
   },
   "profile": {
     "title": "Profile",
@@ -343,5 +344,29 @@
       "good": "Good",
       "easy": "Easy"
     }
+  },
+  "today": {
+    "title": "Today's Queue",
+    "progress": "{{done}} / {{total}} done",
+    "completed_all": "All done for today! 🎉",
+    "empty": "No words scheduled yet",
+    "mark_done": "Mark as done",
+    "mark_pending": "Undo",
+    "regen": "Refresh plan",
+    "regen_pro_only": "Pro only",
+    "plan_size_label": "Words per day"
+  },
+  "word_stats": {
+    "title": "Word Stats",
+    "accuracy": "Accuracy",
+    "attempts": "Attempts",
+    "avg_time": "Avg. time",
+    "streak": "Current streak",
+    "history": "Recent history",
+    "no_data": "No practice data yet",
+    "history_limited": "Full history available in Pro",
+    "correct": "Correct",
+    "wrong": "Wrong",
+    "seconds": "{{s}}s"
   }
 }

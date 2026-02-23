@@ -159,12 +159,16 @@ router.post('/translate', optionalAuth, async (req, res) => {
       const todayUTC    = new Date().toISOString().slice(0, 10);
       const currentCount = req.aiUsageToday ?? 0; // set by optionalAuth
       if (currentCount >= ent.maxAiPerDay) {
+        // AI quota resets at next UTC midnight
+        const nextMidnight = new Date();
+        nextMidnight.setUTCHours(24, 0, 0, 0);
         return res.status(429).json({
           error: `Daily AI limit reached (${ent.maxAiPerDay}/day). Upgrade to Pro for more.`,
           errorCode: 'AI_LIMIT_REACHED',
           limit: ent.maxAiPerDay,
           used: currentCount,
           plan: userPlan,
+          resetAt: nextMidnight.toISOString(),
         });
       }
     }

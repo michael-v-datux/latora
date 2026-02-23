@@ -28,6 +28,7 @@ import {
   submitPracticeResult,
   logPracticeSession,
 } from '../services/practiceService';
+import { fetchTodayPlan, updateTodayItem } from '../services/todayService';
 import { COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
 import { useI18n } from '../i18n';
 import { useAuth } from '../hooks/useAuth';
@@ -159,6 +160,10 @@ export default function PracticeScreen({ route, navigation }) {
   const [forceRestart, setForceRestart] = useState(false); // для "Start over"
   const [sessionsToday, setSessionsToday] = useState(0); // кількість завершених сесій за сьогодні
 
+  // ─── Today Queue ───
+  const [todayPlan, setTodayPlan] = useState(null);     // { id, target_count, completed_count, items, can_regen, ... }
+  const [todayExpanded, setTodayExpanded] = useState(false); // show/hide word list
+
   // ─── Info tooltip ───
   const [activeTooltip, setActiveTooltip] = useState(null); // 'due' | 'mastered' | 'total' | null
   const tooltipTimerRef = useRef(null);
@@ -263,16 +268,18 @@ export default function PracticeScreen({ route, navigation }) {
   // ─── Завантаження даних для Home ───
   const loadHomeData = useCallback(async () => {
     try {
-      const [listsData, statsData, statusesData] = await Promise.all([
+      const [listsData, statsData, statusesData, planData] = await Promise.all([
         fetchLists(),
         fetchPracticeStats(),
         fetchListStatuses(),
+        fetchTodayPlan().catch(() => null), // non-fatal
       ]);
       // fetchLists now returns { lists, usage } — extract the array
       const listsArr = Array.isArray(listsData) ? listsData : (listsData?.lists || []);
       setLists(listsArr);
       setPracticeStats(statsData || { due: 0, mastered: 0, total: 0 });
       setListStatuses(statusesData?.statuses || {});
+      if (planData) setTodayPlan(planData);
     } catch (e) {
       console.warn('Failed to load practice home data:', e);
     }
@@ -564,6 +571,29 @@ export default function PracticeScreen({ route, navigation }) {
     setTimeLeft(prev => prev + 3);
   };
 
+  // ─── Mark today plan item complete / undo ───
+  const handleTodayItemTap = async (item) => {
+    const newStatus = item.status === 'completed' ? 'pending' : 'completed';
+    try {
+      const result = await updateTodayItem(item.word_id, newStatus);
+      // Optimistic update
+      setTodayPlan(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          completed_count: result.completed_count,
+          items: prev.items.map(i =>
+            i.word_id === item.word_id
+              ? { ...i, status: newStatus, completed_at: newStatus === 'completed' ? new Date().toISOString() : null }
+              : i
+          ),
+        };
+      });
+    } catch (e) {
+      console.warn('Failed to update today item:', e);
+    }
+  };
+
   // ─── Reset ───
   const reset = async (completedListId = null) => {
     // Якщо сесію завершено — видаляємо pending запис для цього списку
@@ -638,6 +668,75 @@ export default function PracticeScreen({ route, navigation }) {
             <Text style={styles.title}>{t('practice.title')}</Text>
             <Text style={styles.subtitle}>{t('practice.subtitle')}</Text>
           </View>
+
+          {/* Today Queue */}
+          {todayPlan && todayPlan.target_count > 0 && (
+            <View style={styles.todayCard}>
+              {/* Header row */}
+              <TouchableOpacity
+                style={styles.todayHeader}
+                onPress={() => setTodayExpanded(e => !e)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.todayHeaderLeft}>
+                  <Text style={styles.todayTitle}>{t('today.title')}</Text>
+                  <Text style={styles.todaySubtitle}>
+                    {t('today.progress', {
+                      done: todayPlan.completed_count,
+                      total: todayPlan.target_count,
+                    })}
+                  </Text>
+                </View>
+                <Text style={styles.todayChevron}>{todayExpanded ? '▲' : '▼'}</Text>
+              </TouchableOpacity>
+
+              {/* Progress bar */}
+              <View style={styles.todayProgressBg}>
+                <View
+                  style={[
+                    styles.todayProgressFill,
+                    {
+                      width: `${Math.min(
+                        100,
+                        Math.round((todayPlan.completed_count / todayPlan.target_count) * 100)
+                      )}%`,
+                    },
+                  ]}
+                />
+              </View>
+
+              {/* Expanded word list */}
+              {todayExpanded && (
+                <View style={styles.todayItems}>
+                  {todayPlan.items.map((item) => {
+                    const done = item.status === 'completed';
+                    return (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={[styles.todayItem, done && styles.todayItemDone]}
+                        onPress={() => handleTodayItemTap(item)}
+                        activeOpacity={0.6}
+                      >
+                        <Text style={[styles.todayItemCheck, done && styles.todayItemCheckDone]}>
+                          {done ? '✓' : '○'}
+                        </Text>
+                        <View style={styles.todayItemText}>
+                          <Text style={[styles.todayItemWord, done && styles.todayItemWordDone]}>
+                            {item.word?.original || '—'}
+                          </Text>
+                          {item.word?.translation ? (
+                            <Text style={styles.todayItemTranslation}>
+                              {item.word.translation}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          )}
 
           {/* Статистика */}
           <View style={styles.statsCard}>
@@ -1473,4 +1572,59 @@ const styles = StyleSheet.create({
     paddingVertical: 12, paddingHorizontal: 32,
   },
   doneButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '600' },
+
+  // ─── Today Queue ───────────────────────────────────────────
+  todayCard: {
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.md,
+    borderRadius: BORDER_RADIUS.lg,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    overflow: 'hidden',
+  },
+  todayHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.md,
+  },
+  todayHeaderLeft: { flex: 1 },
+  todayTitle: { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary, letterSpacing: 0.2 },
+  todaySubtitle: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+  todayChevron: { fontSize: 11, color: COLORS.textHint, marginLeft: 8 },
+  todayProgressBg: {
+    height: 4,
+    backgroundColor: COLORS.borderLight,
+    marginHorizontal: SPACING.md,
+    marginBottom: SPACING.sm,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  todayProgressFill: {
+    height: '100%',
+    backgroundColor: COLORS.primary,
+    borderRadius: 2,
+  },
+  todayItems: {
+    borderTopWidth: 1,
+    borderTopColor: COLORS.borderLight,
+    paddingVertical: 4,
+  },
+  todayItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+  },
+  todayItemDone: { opacity: 0.55 },
+  todayItemCheck: { fontSize: 16, color: COLORS.textHint, marginRight: 12, width: 20, textAlign: 'center' },
+  todayItemCheckDone: { color: '#16a34a' },
+  todayItemText: { flex: 1 },
+  todayItemWord: { fontSize: 15, fontWeight: '500', color: COLORS.textPrimary },
+  todayItemWordDone: { textDecorationLine: 'line-through', color: COLORS.textSecondary },
+  todayItemTranslation: { fontSize: 12, color: COLORS.textSecondary, marginTop: 1 },
 });

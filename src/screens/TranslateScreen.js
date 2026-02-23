@@ -284,7 +284,8 @@ const handleSwap = () => {
       const errorCode = err?.response?.data?.errorCode || err?.data?.errorCode;
       if (errorCode === 'AI_LIMIT_REACHED') {
         const limit = err?.response?.data?.limit || err?.data?.limit || 5;
-        setError(`__AI_LIMIT__${limit}`); // special sentinel for UI
+        const resetAt = err?.response?.data?.resetAt || err?.data?.resetAt || null;
+        setError(`__AI_LIMIT__${limit}__${resetAt || ''}`); // special sentinel for UI
       } else {
         setError(err.message);
       }
@@ -786,21 +787,35 @@ const handleSwap = () => {
 )}
 
 {activeTab === 'translate' && error && (
-            error.startsWith('__AI_LIMIT__') ? (
-              <View style={styles.limitBox}>
-                <Text style={styles.limitTitle}>{t('translate.limit_ai_title')}</Text>
-                <Text style={styles.limitBody}>
-                  {t('translate.limit_ai_body', { max: error.replace('__AI_LIMIT__', '') })}
-                </Text>
-                <TouchableOpacity
-                  style={styles.limitUpgradeBtn}
-                  onPress={() => setError(null)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.limitUpgradeText}>{t('translate.limit_ai_upgrade')}</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
+            error.startsWith('__AI_LIMIT__') ? (() => {
+              // Parse sentinel: __AI_LIMIT__<limit>__<resetAt>
+              const parts = error.replace('__AI_LIMIT__', '').split('__');
+              const limitNum = parts[0];
+              const resetAtStr = parts[1] || '';
+              let resetLabel = '';
+              if (resetAtStr) {
+                try {
+                  const resetDate = new Date(resetAtStr);
+                  const hoursLeft = Math.ceil((resetDate - Date.now()) / (1000 * 60 * 60));
+                  resetLabel = hoursLeft > 0 ? ` (resets in ~${hoursLeft}h)` : '';
+                } catch {}
+              }
+              return (
+                <View style={styles.limitBox}>
+                  <Text style={styles.limitTitle}>{t('translate.limit_ai_title')}</Text>
+                  <Text style={styles.limitBody}>
+                    {t('translate.limit_ai_body', { max: limitNum })}{resetLabel}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.limitUpgradeBtn}
+                    onPress={() => setError(null)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.limitUpgradeText}>{t('translate.limit_ai_upgrade')}</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })() : (
               <View style={styles.errorBox}>
                 <Text style={styles.errorText}>{error}</Text>
               </View>

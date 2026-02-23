@@ -39,6 +39,7 @@ import {
   moveWords,
 } from '../services/listsService';
 import { fetchSessionCounts, fetchListStatuses } from '../services/practiceService';
+import { fetchWordStats } from '../services/todayService';
 import { useI18n } from '../i18n';
 
 // --- Helpers: normalize idiom fields coming from Supabase/HTTP ---
@@ -125,6 +126,14 @@ export default function ListsScreen({ navigation }) {
   const [dueOnly, setDueOnly] = useState(false);
   const [isPro, setIsPro] = useState(false);
 
+  // Search (client-side, all users)
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Word stats modal
+  const [statsModalWord, setStatsModalWord] = useState(null); // word object
+  const [wordStats, setWordStats] = useState(null);           // server response
+  const [loadingStats, setLoadingStats] = useState(false);
+
   const totals = useMemo(() => {
     const totalWords = (lists || []).reduce((sum, l) => sum + (l.word_count || 0), 0);
     const totalLists = (lists || []).length;
@@ -167,10 +176,11 @@ export default function ListsScreen({ navigation }) {
     setLifetimeSessions(null);
     setBulkMode(false);
     setSelectedWordIds(new Set());
-    // Reset filters when opening a new list
+    // Reset filters and search when opening a new list
     setCefrFilter([]);
     setStateFilter('all');
     setDueOnly(false);
+    setSearchQuery('');
     try {
       const [details, sessionData] = await Promise.all([
         fetchListDetails(list.id),
@@ -357,17 +367,37 @@ export default function ListsScreen({ navigation }) {
 
   const selectedCount = selectedWordIds.size;
 
-  // ── Filtered words (client-side, Pro only; Free sees all words) ───────────────
+  // ── Filtered words (client-side) ──────────────────────────────────────────────
+  // Search is available to all users; CEFR/state/due filters are Pro-only.
   const filteredWords = useMemo(() => {
-    const words = selectedWords || [];
-    if (!isPro) return words; // Free: no filtering
-    return words.filter((w) => {
-      if (cefrFilter.length > 0 && !cefrFilter.includes(w.cefr_level)) return false;
-      if (stateFilter !== 'all' && w.word_state !== stateFilter) return false;
-      if (dueOnly && !w.is_due) return false;
-      return true;
-    });
-  }, [selectedWords, isPro, cefrFilter, stateFilter, dueOnly]);
+    let words = selectedWords || [];
+
+    // 1. Text search (all users)
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      words = words.filter(
+        (w) =>
+          (w.original || '').toLowerCase().includes(q) ||
+          (w.translation || '').toLowerCase().includes(q) ||
+          (w.transcription || '').toLowerCase().includes(q)
+      );
+    }
+
+    // 2. Pro filters
+    if (isPro) {
+      if (cefrFilter.length > 0) {
+        words = words.filter((w) => cefrFilter.includes(w.cefr_level));
+      }
+      if (stateFilter !== 'all') {
+        words = words.filter((w) => w.word_state === stateFilter);
+      }
+      if (dueOnly) {
+        words = words.filter((w) => w.is_due);
+      }
+    }
+
+    return words;
+  }, [selectedWords, searchQuery, isPro, cefrFilter, stateFilter, dueOnly]);
 
   const handleBulkDelete = () => {
     if (selectedCount === 0 || !selectedList) return;
@@ -583,6 +613,27 @@ export default function ListsScreen({ navigation }) {
             </View>
           )}
 
+          {/* Search bar */}
+          {!loadingDetails && words.length > 3 && !bulkMode && (
+            <View style={styles.searchBarWrap}>
+              <Ionicons name="search-outline" size={16} color={COLORS.textHint} style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder={t('lists.search_placeholder')}
+                placeholderTextColor={COLORS.textHint}
+                clearButtonMode="while-editing"
+                returnKeyType="search"
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close-circle" size={16} color={COLORS.textHint} />
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
           {/* Practice info — тільки якщо у списку є слова */}
           {!loadingDetails && words.length > 0 && (
             <View style={styles.practiceInfoRow}>
@@ -738,17 +789,42 @@ export default function ListsScreen({ navigation }) {
                       </View>
                     </TouchableOpacity>
 
-                    {/* Кнопка розгортання (тільки якщо є v2 дані) */}
-                    {hasV2Data && !bulkMode && (
-                      <TouchableOpacity
-                        style={styles.expandBtn}
-                        onPress={toggleExpand}
-                        activeOpacity={0.6}
-                      >
-                        <Text style={styles.expandBtnText}>
-                          {isExpanded ? '▲ ' : '▼ '}{t('word.tap_to_expand')}
-                        </Text>
-                      </TouchableOpacity>
+                    {/* Рядок кнопок розгортання + статистики */}
+                    {!bulkMode && (hasV2Data || true) && (
+                      <View style={styles.wordActionRow}>
+                        {hasV2Data && (
+                          <TouchableOpacity
+                            style={styles.expandBtn}
+                            onPress={toggleExpand}
+                            activeOpacity={0.6}
+                          >
+                            <Text style={styles.expandBtnText}>
+                              {isExpanded ? '▲ ' : '▼ '}{t('word.tap_to_expand')}
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                        <TouchableOpacity
+                          style={styles.statsBtn}
+                          onPress={async () => {
+                            setStatsModalWord(item);
+                            setWordStats(null);
+                            setLoadingStats(true);
+                            try {
+                              const s = await fetchWordStats(item.id);
+                              setWordStats(s);
+                            } catch (e) {
+                              setWordStats({ error: true });
+                            } finally {
+                              setLoadingStats(false);
+                            }
+                          }}
+                          activeOpacity={0.6}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="analytics-outline" size={14} color={COLORS.textHint} />
+                          <Text style={styles.statsBtnText}>{t('word_stats.title')}</Text>
+                        </TouchableOpacity>
+                      </View>
                     )}
 
                     {/* Розгорнутий breakdown */}
@@ -884,6 +960,102 @@ export default function ListsScreen({ navigation }) {
                 >
                   <Text style={styles.modalPrimaryText}>Continue</Text>
                 </TouchableOpacity>
+              </Pressable>
+            </Pressable>
+          </Modal>
+
+          {/* Word Stats Modal */}
+          <Modal
+            visible={!!statsModalWord}
+            transparent
+            animationType="slide"
+            onRequestClose={() => { setStatsModalWord(null); setWordStats(null); }}
+          >
+            <Pressable
+              style={styles.modalOverlay}
+              onPress={() => { setStatsModalWord(null); setWordStats(null); }}
+            >
+              <Pressable style={[styles.modalContent, { maxHeight: '75%' }]} onPress={() => {}}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>
+                    {statsModalWord?.original || t('word_stats.title')}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => { setStatsModalWord(null); setWordStats(null); }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="close" size={20} color={COLORS.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+                {statsModalWord?.translation ? (
+                  <Text style={styles.statsModalTranslation}>{statsModalWord.translation}</Text>
+                ) : null}
+
+                {loadingStats ? (
+                  <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                    <ActivityIndicator color={COLORS.primary} />
+                  </View>
+                ) : !wordStats || wordStats.error ? (
+                  <Text style={styles.statsModalEmpty}>{t('word_stats.no_data')}</Text>
+                ) : wordStats.total_attempts === 0 ? (
+                  <Text style={styles.statsModalEmpty}>{t('word_stats.no_data')}</Text>
+                ) : (
+                  <ScrollView showsVerticalScrollIndicator={false}>
+                    {/* Stats grid */}
+                    <View style={styles.statsGrid}>
+                      {[
+                        {
+                          label: t('word_stats.accuracy'),
+                          value: wordStats.accuracy_pct != null ? `${wordStats.accuracy_pct}%` : '—',
+                          color: wordStats.accuracy_pct >= 70 ? '#16a34a' : wordStats.accuracy_pct >= 40 ? '#ca8a04' : '#dc2626',
+                        },
+                        {
+                          label: t('word_stats.attempts'),
+                          value: String(wordStats.total_attempts),
+                          color: COLORS.textPrimary,
+                        },
+                        {
+                          label: t('word_stats.streak'),
+                          value: String(wordStats.current_streak),
+                          color: wordStats.current_streak >= 3 ? '#16a34a' : COLORS.textPrimary,
+                        },
+                        {
+                          label: t('word_stats.avg_time'),
+                          value: wordStats.avg_answer_ms
+                            ? `${(wordStats.avg_answer_ms / 1000).toFixed(1)}s`
+                            : '—',
+                          color: COLORS.textPrimary,
+                        },
+                      ].map((s) => (
+                        <View key={s.label} style={styles.statsGridItem}>
+                          <Text style={[styles.statsGridValue, { color: s.color }]}>{s.value}</Text>
+                          <Text style={styles.statsGridLabel}>{s.label}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* Recent history */}
+                    {wordStats.recent_events?.length > 0 && (
+                      <View style={styles.statsHistorySection}>
+                        <Text style={styles.statsHistoryTitle}>{t('word_stats.history')}</Text>
+                        <View style={styles.statsHistoryDots}>
+                          {wordStats.recent_events.slice(0, 20).map((e, i) => (
+                            <View
+                              key={i}
+                              style={[
+                                styles.historyDot,
+                                { backgroundColor: e.result ? '#16a34a' : '#dc2626' },
+                              ]}
+                            />
+                          ))}
+                        </View>
+                        {wordStats.history_limited && (
+                          <Text style={styles.statsHistoryLimited}>{t('word_stats.history_limited')}</Text>
+                        )}
+                      </View>
+                    )}
+                  </ScrollView>
+                )}
               </Pressable>
             </Pressable>
           </Modal>
@@ -1384,5 +1556,87 @@ const styles = StyleSheet.create({
   fontSize: 12,
   lineHeight: 16,
 },
+
+  // ─── Search bar ───────────────────────────────────────────
+  searchBarWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: BORDER_RADIUS.md,
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.sm,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 7,
+  },
+  searchIcon: { marginRight: 6 },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: COLORS.textPrimary,
+    padding: 0,
+  },
+
+  // ─── Word action row ─────────────────────────────────────
+  wordActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  statsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+    opacity: 0.7,
+  },
+  statsBtnText: { fontSize: 11, color: COLORS.textHint },
+
+  // ─── Word Stats Modal ────────────────────────────────────
+  statsModalTranslation: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    marginBottom: 16,
+  },
+  statsModalEmpty: {
+    fontSize: 14,
+    color: COLORS.textHint,
+    textAlign: 'center',
+    paddingVertical: 20,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 20,
+  },
+  statsGridItem: {
+    width: '47%',
+    backgroundColor: COLORS.background,
+    borderRadius: BORDER_RADIUS.md,
+    padding: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+  },
+  statsGridValue: {
+    fontSize: 26,
+    fontWeight: '300',
+    fontFamily: 'Courier',
+  },
+  statsGridLabel: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
+  statsHistorySection: { marginTop: 4 },
+  statsHistoryTitle: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 8, fontWeight: '600' },
+  statsHistoryDots: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
+  historyDot: { width: 12, height: 12, borderRadius: 6 },
+  statsHistoryLimited: {
+    fontSize: 11,
+    color: COLORS.textHint,
+    marginTop: 8,
+    fontStyle: 'italic',
+  },
 
 });

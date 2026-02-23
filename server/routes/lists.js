@@ -72,6 +72,7 @@ router.post("/lists", requireAuth, loadPlan, async (req, res, next) => {
         limit: ent.maxLists,
         used: listCount,
         plan: req.plan,
+        resetAt: null, // lists limit is not time-based, only plan-based
       });
     }
 
@@ -119,12 +120,16 @@ router.post("/lists/:id/words", requireAuth, loadPlan, async (req, res, next) =>
     if (savesErr) throw savesErr;
 
     if (savesToday >= ent.maxSavesPerDay) {
+      // resetAt = next UTC midnight (saves quota resets at 00:00 UTC)
+      const nextMidnight = new Date();
+      nextMidnight.setUTCHours(24, 0, 0, 0);
       return res.status(429).json({
         error: `Досягнуто денний ліміт збережень (${ent.maxSavesPerDay}/день). Оновіться до Pro.`,
         errorCode: "SAVES_LIMIT_REACHED",
         limit: ent.maxSavesPerDay,
         used: savesToday,
         plan: req.plan,
+        resetAt: nextMidnight.toISOString(),
       });
     }
 
@@ -142,6 +147,7 @@ router.post("/lists/:id/words", requireAuth, loadPlan, async (req, res, next) =>
         limit: ent.maxTotalWords,
         used: totalWords,
         plan: req.plan,
+        resetAt: null, // total words limit is plan-based, not time-based
       });
     }
 

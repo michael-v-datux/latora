@@ -27,10 +27,16 @@ const ENTITLEMENTS = {
     // Practice
     maxPracticeSessions: 3,       // max completed practice sessions per day
 
+    // Daily Plan
+    dailyPlanSize:       10,      // words in today's queue
+    canCustomizePlan:    false,   // can user change plan size
+    canRegenPlan:        false,   // can user regenerate plan mid-day
+
     // Features (boolean flags)
     analyticsLevel:      'basic', // 'basic' | 'full'
     srsMode:             'basic', // 'basic' | 'advanced'
     listFilters:         false,   // CEFR/state/due-only filters in list detail
+    wordStats:           false,   // per-word accuracy history
   },
 
   pro: {
@@ -49,10 +55,16 @@ const ENTITLEMENTS = {
     // Practice
     maxPracticeSessions: Infinity,
 
+    // Daily Plan
+    dailyPlanSize:       30,      // words in today's queue (user can set 10–50)
+    canCustomizePlan:    true,    // can user change plan size
+    canRegenPlan:        true,    // can user regenerate plan mid-day
+
     // Features
     analyticsLevel:      'full',
     srsMode:             'advanced',
     listFilters:         true,
+    wordStats:           true,    // per-word accuracy history
   },
 };
 
