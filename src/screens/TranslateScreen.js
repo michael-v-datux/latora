@@ -643,9 +643,7 @@ const handleSwap = () => {
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.subtitle} numberOfLines={1}>
-        {sourceLang} → {targetLang} · {t('translate.powered_by_ai')}
-      </Text>
+      {/* subtitle removed: language pair already visible in the pickers above */}
     </>
   )}
 </View>

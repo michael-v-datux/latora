@@ -1195,7 +1195,7 @@ export default function ProfileScreen({ navigation }) {
                       </View>
                       <View style={styles.langPairStats}>
                         <Text style={styles.langPairCount}>{pair.word_count}</Text>
-                        <Text style={styles.langPairCountLabel}>{t("profile.lang_words_label")}</Text>
+                        <Text style={styles.langPairCountLabel}>{t("profile.lang_words_label", { count: pair.word_count ?? 0 })}</Text>
                       </View>
                     </View>
                   ))}

@@ -125,10 +125,12 @@ export default function ListsScreen({ navigation }) {
   const [stateFilter, setStateFilter] = useState('all');
   const [dueOnly, setDueOnly] = useState(false);
   const [isPro, setIsPro] = useState(false);
+  const [langPairFilter, setLangPairFilter] = useState(null); // null = all pairs
 
   // Filter dropdown open state
   const [cefrDropOpen, setCefrDropOpen] = useState(false);
   const [stateDropOpen, setStateDropOpen] = useState(false);
+  const [langPairDropOpen, setLangPairDropOpen] = useState(false);
 
   // Search (client-side, all users)
   const [searchQuery, setSearchQuery] = useState('');
@@ -144,9 +146,8 @@ export default function ListsScreen({ navigation }) {
     return { totalWords, totalLists };
   }, [lists]);
 
-  const pluralize = (n, one, many) => (n === 1 ? one : many);
-  const formatWords = (n) => `${n} ${pluralize(n, 'word', 'words')}`;
-  const formatLists = (n) => `${n} ${pluralize(n, 'list', 'lists')}`;
+  const formatWords = (n) => t('lists.words', { count: n });
+  const formatLists = (n) => t('lists.lists', { count: n });
 
   const loadLists = async (opts = { silent: false }) => {
     if (!opts.silent) setLoadingLists(true);
@@ -184,9 +185,11 @@ export default function ListsScreen({ navigation }) {
     setCefrFilter([]);
     setStateFilter('all');
     setDueOnly(false);
+    setLangPairFilter(null);
     setSearchQuery('');
     setCefrDropOpen(false);
     setStateDropOpen(false);
+    setLangPairDropOpen(false);
     try {
       const [details, sessionData] = await Promise.all([
         fetchListDetails(list.id),
@@ -396,7 +399,15 @@ export default function ListsScreen({ navigation }) {
       words = words.filter((w) => cefrFilter.includes(w.cefr_level));
     }
 
-    // 3. Pro-only filters
+    // 3. Language pair filter (shown only when list has mixed langs)
+    if (langPairFilter) {
+      words = words.filter((w) => {
+        const pair = `${(w.source_lang || '').toUpperCase()}→${(w.target_lang || '').toUpperCase()}`;
+        return pair === langPairFilter;
+      });
+    }
+
+    // 4. Pro-only filters
     if (isPro) {
       if (stateFilter !== 'all') {
         words = words.filter((w) => w.word_state === stateFilter);
@@ -407,7 +418,7 @@ export default function ListsScreen({ navigation }) {
     }
 
     return words;
-  }, [selectedWords, searchQuery, cefrFilter, isPro, stateFilter, dueOnly]);
+  }, [selectedWords, searchQuery, cefrFilter, langPairFilter, isPro, stateFilter, dueOnly]);
 
   const handleBulkDelete = () => {
     if (selectedCount === 0 || !selectedList) return;
@@ -482,9 +493,10 @@ export default function ListsScreen({ navigation }) {
       words.map(w => `${(w.source_lang || '').toUpperCase()}→${(w.target_lang || '').toUpperCase()}`)
     );
     const hasMixedLangs = langPairs.size > 1;
+    const langPairsArray = Array.from(langPairs).filter(p => p !== '→');
 
     // Check if any filter is active
-    const hasActiveFilter = cefrFilter.length > 0 || stateFilter !== 'all' || dueOnly;
+    const hasActiveFilter = cefrFilter.length > 0 || stateFilter !== 'all' || dueOnly || langPairFilter !== null;
 
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -529,9 +541,9 @@ export default function ListsScreen({ navigation }) {
               <View style={styles.listSubtitleRow}>
                 <Text style={styles.listSubtitle}>
                   {loadingDetails
-                    ? 'Loading…'
+                    ? '…'
                     : hasActiveFilter
-                      ? `${displayWords.length}/${words.length} words`
+                      ? t('lists.words_filtered', { shown: displayWords.length, total: words.length })
                       : formatWords(words.length)}
                 </Text>
                 {!loadingDetails && hasMixedLangs && (
@@ -627,6 +639,28 @@ export default function ListsScreen({ navigation }) {
                 </TouchableOpacity>
               )}
 
+              {/* Language pair filter — only shown when list has mixed langs */}
+              {hasMixedLangs && (
+                <TouchableOpacity
+                  style={[styles.filterDropBtn, langPairFilter !== null && styles.filterDropBtnActive]}
+                  onPress={() => {
+                    setLangPairDropOpen((v) => !v);
+                    setCefrDropOpen(false);
+                    setStateDropOpen(false);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.filterDropText, langPairFilter !== null && styles.filterDropTextActive]}>
+                    {langPairFilter ?? t('lists.filter_all_pairs')}
+                  </Text>
+                  <Ionicons
+                    name={langPairDropOpen ? 'chevron-up' : 'chevron-down'}
+                    size={12}
+                    color={langPairFilter !== null ? '#ffffff' : COLORS.textSecondary}
+                  />
+                </TouchableOpacity>
+              )}
+
               {/* Reset — always visible when any filter active */}
               {hasActiveFilter && (
                 <TouchableOpacity
@@ -635,8 +669,10 @@ export default function ListsScreen({ navigation }) {
                     setCefrFilter([]);
                     setStateFilter('all');
                     setDueOnly(false);
+                    setLangPairFilter(null);
                     setCefrDropOpen(false);
                     setStateDropOpen(false);
+                    setLangPairDropOpen(false);
                   }}
                   activeOpacity={0.7}
                   hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
@@ -693,6 +729,36 @@ export default function ListsScreen({ navigation }) {
                     </TouchableOpacity>
                   );
                 })}
+              </View>
+            </View>
+          )}
+
+          {/* Language pair dropdown panel — only when list has mixed langs */}
+          {langPairDropOpen && hasMixedLangs && !bulkMode && (
+            <View style={styles.dropPanel}>
+              <View style={styles.dropPanelRow}>
+                {/* "All" option */}
+                <TouchableOpacity
+                  style={[styles.dropChip, langPairFilter === null && styles.dropChipActive]}
+                  onPress={() => { setLangPairFilter(null); setLangPairDropOpen(false); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.dropChipText, langPairFilter === null && styles.dropChipTextActive]}>
+                    {t('lists.filter_all_pairs')}
+                  </Text>
+                </TouchableOpacity>
+                {langPairsArray.map((pair) => (
+                  <TouchableOpacity
+                    key={pair}
+                    style={[styles.dropChip, langPairFilter === pair && styles.dropChipActive]}
+                    onPress={() => { setLangPairFilter(pair); setLangPairDropOpen(false); }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.dropChipText, langPairFilter === pair && styles.dropChipTextActive]}>
+                      {pair}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
               </View>
             </View>
           )}
@@ -1143,7 +1209,7 @@ export default function ListsScreen({ navigation }) {
           <Text style={styles.title}>My Lists</Text>
           <View style={styles.subtitleRow}>
             <Text style={styles.subtitle}>
-              {formatWords(totals.totalWords)} across {formatLists(totals.totalLists)}
+              {t('lists.totals_summary', { words: totals.totalWords, lists: totals.totalLists })}
             </Text>
             {listsUsage && (
               <Text style={styles.usageChip}>
@@ -1191,7 +1257,14 @@ export default function ListsScreen({ navigation }) {
                           <Ionicons name="folder-outline" size={22} color={COLORS.textMuted} />
                           <View>
                             <Text style={styles.listCardName}>{list.name}</Text>
-                            <Text style={styles.listCardCount}>{formatWords(list.word_count || 0)}</Text>
+                            <View style={styles.listCardCountRow}>
+                              <Text style={styles.listCardCount}>{formatWords(list.word_count || 0)}</Text>
+                              {list.has_mixed_langs && (
+                                <View style={styles.mixedLangTagSmall}>
+                                  <Text style={styles.mixedLangTagSmallText}>{t('lists.mixed_langs_tag')}</Text>
+                                </View>
+                              )}
+                            </View>
                           </View>
                         </View>
                         <Text style={styles.listCardPercent}>{progress}%</Text>
@@ -1452,6 +1525,17 @@ const styles = StyleSheet.create({
     borderColor: '#fde68a',
   },
   mixedLangTagText: { fontSize: 10, fontWeight: '700', color: '#92400e', letterSpacing: 0.2 },
+  // Smaller variant for list cards in the main Lists tab
+  listCardCountRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 1 },
+  mixedLangTagSmall: {
+    backgroundColor: '#fef3c7',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  mixedLangTagSmallText: { fontSize: 9, fontWeight: '700', color: '#92400e', letterSpacing: 0.2 },
 
   // Practice info
   practiceInfoRow: {

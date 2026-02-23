@@ -19,6 +19,7 @@ router.get("/lists", requireAuth, loadPlan, async (req, res, next) => {
     const supabase = req.supabase;
     const ent      = req.entitlements;
 
+    // Fetch lists with word count
     const { data, error } = await supabase
       .from("lists")
       .select("*, list_words(count)")
@@ -26,9 +27,25 @@ router.get("/lists", requireAuth, loadPlan, async (req, res, next) => {
 
     if (error) throw error;
 
+    // Fetch distinct language pairs per list to detect mixed-language lists
+    // (separate query: PostgREST can't combine aggregate count + row data in one select)
+    const { data: pairsData } = await supabase
+      .from("list_words")
+      .select("list_id, words(source_lang, target_lang)");
+
+    // Build a map: listId → Set of "SRC→TGT" strings
+    const pairsByList = {};
+    for (const row of (pairsData || [])) {
+      if (!row.words) continue;
+      const key = `${(row.words.source_lang || '').toUpperCase()}→${(row.words.target_lang || '').toUpperCase()}`;
+      if (!pairsByList[row.list_id]) pairsByList[row.list_id] = new Set();
+      pairsByList[row.list_id].add(key);
+    }
+
     const lists = (data || []).map((l) => ({
       ...l,
-      word_count: l.list_words?.[0]?.count || 0,
+      word_count:      l.list_words?.[0]?.count || 0,
+      has_mixed_langs: (pairsByList[l.id]?.size ?? 0) > 1,
     }));
 
     // Include usage metadata so client can show "2/3 lists"
