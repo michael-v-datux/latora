@@ -416,7 +416,11 @@ export default function SettingsScreen({ navigation }) {
           <SettingRow
             icon="notifications-outline"
             label={t("settings.notifications_label")}
-            onPress={() => navigation.navigate("Notifications", { settings, onUpdate: patch })}
+            onPress={() => navigation.navigate("Notifications", {
+              reminders_enabled: settings.reminders_enabled ?? false,
+              reminder_practice: settings.reminder_practice ?? false,
+              reminder_today:    settings.reminder_today    ?? false,
+            })}
           />
         </View>
 
@@ -554,14 +558,13 @@ export function NotificationsScreen({ navigation, route }) {
   const { user }  = useAuth();
   const insets    = useSafeAreaInsets();
 
-  // Initialise from passed settings
-  const passedSettings = route?.params?.settings ?? {};
-  const onUpdate       = route?.params?.onUpdate;
+  // Initialise from serialisable nav params (no functions — those cause RN warnings)
+  const params = route?.params ?? {};
 
-  const [permStatus, setPermStatus]           = useState(null); // 'granted' | 'denied' | 'undetermined'
-  const [remindersEnabled, setRemindersEnabled] = useState(passedSettings.reminders_enabled ?? false);
-  const [practiceOn, setPracticeOn]           = useState(passedSettings.reminder_practice  ?? false);
-  const [todayOn, setTodayOn]                 = useState(passedSettings.reminder_today     ?? false);
+  const [permStatus, setPermStatus]           = useState(null); // 'granted' | 'denied' | 'undetermined' | 'unavailable'
+  const [remindersEnabled, setRemindersEnabled] = useState(params.reminders_enabled ?? false);
+  const [practiceOn, setPracticeOn]           = useState(params.reminder_practice  ?? false);
+  const [todayOn, setTodayOn]                 = useState(params.reminder_today     ?? false);
   const [saving, setSaving]                   = useState(false);
 
   // Check permission on mount (safe — won't crash in Expo Go)
@@ -629,13 +632,13 @@ export function NotificationsScreen({ navigation, route }) {
   }, [remindersEnabled, t]);
 
   const _persist = useCallback(async (updates) => {
+    if (!user?.id) return;
     setSaving(true);
     try {
-      if (onUpdate) await onUpdate(updates);
-      else if (user?.id) await saveSettings(user.id, updates);
+      await saveSettings(user.id, updates);
     } catch {}
     setSaving(false);
-  }, [onUpdate, user]);
+  }, [user]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
