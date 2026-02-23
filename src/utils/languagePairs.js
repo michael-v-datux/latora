@@ -19,8 +19,8 @@ export function formatPair(sourceLang, targetLang) {
 // Невеликий словник назв для UI (EN/UK). Для інших мов — fallback на DeepL name або код.
 export const LANGUAGE_LABELS = {
   EN: { en: 'English', uk: 'Англійська' },
-  'EN-GB': { en: 'English (UK)', uk: 'Англійська (UK)' },
-  'EN-US': { en: 'English (US)', uk: 'Англійська (US)' },
+  'EN-GB': { en: 'English', uk: 'Англійська' },  // legacy — normalised to EN
+  'EN-US': { en: 'English', uk: 'Англійська' },  // legacy — normalised to EN
   UK: { en: 'Ukrainian', uk: 'Українська' },
   PL: { en: 'Polish', uk: 'Польська' },
   DE: { en: 'German', uk: 'Німецька' },

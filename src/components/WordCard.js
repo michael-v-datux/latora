@@ -294,7 +294,6 @@ export default function WordCard({ word, onAddToList, isAdded = false, onRevert 
       <View style={styles.header}>
         <View style={styles.wordInfo}>
           <Text style={styles.original}>{word.original}</Text>
-          <Text style={styles.transcription}>{word.transcription}</Text>
         </View>
         <View style={styles.badges}>
           <CefrBadge level={word.cefr_level || word.cefr} />
@@ -318,6 +317,11 @@ export default function WordCard({ word, onAddToList, isAdded = false, onRevert 
       ]}>
         <Text style={styles.translation}>{word.translation}</Text>
       </View>
+
+      {/* ─── Transcription (shown for the translated word, below translation) ─── */}
+      {!!word.transcription && (
+        <Text style={styles.transcription}>{word.transcription}</Text>
+      )}
 
       {/* ─── Idiom block ─── */}
       {isIdiomatic(word) && (idiomMeta.idiomatic.length > 0 || !!idiomMeta.literal) && (
@@ -592,7 +596,7 @@ const styles = StyleSheet.create({
   },
   wordInfo: { flex: 1 },
   original: { fontSize: 24, fontWeight: '400', color: COLORS.primary },
-  transcription: { fontSize: 13, color: COLORS.textMuted, fontFamily: 'Courier', marginTop: 2 },
+  transcription: { fontSize: 13, color: COLORS.textMuted, fontFamily: 'Courier', marginTop: 4, marginBottom: 6 },
   badges: { alignItems: 'flex-end', gap: 6 },
   partOfSpeech: { fontSize: 10, color: COLORS.textMuted, fontStyle: 'italic' },
   langPill: {

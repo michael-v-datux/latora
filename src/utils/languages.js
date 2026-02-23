@@ -9,7 +9,7 @@ export const DEFAULT_PAIR = { sourceLang: 'EN', targetLang: 'UK' };
 
 // Curated Europe-first list (no Asian languages as requested)
 export const EUROPE_LANGUAGE_ALLOWLIST = new Set([
-  'EN', 'EN-GB', 'EN-US',
+  'EN',
   'UK',
   'DE',
   'FR',
@@ -41,9 +41,9 @@ export function langLabel(code) {
   const c = normalizeLangCode(code);
   switch (c) {
     case 'EN':
-    case 'EN-US':
-    case 'EN-GB':
-      return c === 'EN-US' ? 'English (US)' : c === 'EN-GB' ? 'English (UK)' : 'English';
+    case 'EN-US':  // kept for legacy stored values
+    case 'EN-GB':  // kept for legacy stored values
+      return 'English';
     case 'UK':
       return 'Українська';
     case 'PL':

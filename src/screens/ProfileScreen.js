@@ -1169,7 +1169,10 @@ export default function ProfileScreen({ navigation }) {
               <>
                 {/* ── Level A: Pair word counts (Free) ── */}
                 <View style={styles.card}>
-                  <Text style={styles.sectionLabel}>{t("profile.lang_pairs_section")}</Text>
+                  <InfoSectionHeader
+                    label={t("profile.lang_pairs_section")}
+                    infoText={t("profile.info_lang_pairs")}
+                  />
                   {pairWordCounts.map((pair) => (
                     <View key={pair.pair} style={styles.langPairRow}>
                       {/* Left: badge + directional split */}

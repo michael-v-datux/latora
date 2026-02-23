@@ -94,7 +94,7 @@ const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
 const WORD_STATES = ['new', 'learning', 'stabilizing', 'mastered', 'decaying'];
 
 export default function ListsScreen({ navigation }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [lists, setLists] = useState([]);
   const [listsUsage, setListsUsage] = useState(null); // { listCount, maxLists, plan }
   const [selectedList, setSelectedList] = useState(null);
@@ -502,7 +502,7 @@ export default function ListsScreen({ navigation }) {
                 setStateDropOpen(false);
               }}
             >
-              <Text style={styles.backText}>← Back</Text>
+              <Text style={styles.backText}>←</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -517,7 +517,7 @@ export default function ListsScreen({ navigation }) {
               }}
               activeOpacity={0.7}
             >
-              <Text style={styles.bulkToggleText}>{bulkMode ? 'Cancel' : 'Select'}</Text>
+              <Text style={styles.bulkToggleText}>{bulkMode ? t('common.cancel') : t('lists.select_btn')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -926,7 +926,7 @@ export default function ListsScreen({ navigation }) {
                         activeOpacity={0.8}
                       >
                         <Ionicons name="trash-outline" size={18} color={COLORS.surface} />
-                        <Text style={styles.swipeDeleteText}>Delete</Text>
+                        <Text style={styles.swipeDeleteText}>{t('common.delete')}</Text>
                       </TouchableOpacity>
                     )}
                     rightThreshold={40}
@@ -954,7 +954,7 @@ export default function ListsScreen({ navigation }) {
                 }}
               >
                 <Text style={styles.bulkBarText}>
-                  {selectedWordIds.size === displayWords.length ? 'Unselect all' : 'Select all'}
+                  {selectedWordIds.size === displayWords.length ? t('lists.unselect_all') : t('lists.select_all')}
                 </Text>
               </TouchableOpacity>
 
@@ -966,7 +966,7 @@ export default function ListsScreen({ navigation }) {
                 }}
                 disabled={selectedCount === 0}
               >
-                <Text style={styles.bulkBarText}>Move</Text>
+                <Text style={styles.bulkBarText}>{t('common.move')}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -974,7 +974,7 @@ export default function ListsScreen({ navigation }) {
                 onPress={handleBulkDelete}
                 disabled={selectedCount === 0}
               >
-                <Text style={styles.bulkBarTextDanger}>Delete</Text>
+                <Text style={styles.bulkBarTextDanger}>{t('common.delete')}</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -995,7 +995,7 @@ export default function ListsScreen({ navigation }) {
                   </TouchableOpacity>
                 </View>
 
-                <Text style={styles.modalSubtitle}>Select a target list</Text>
+                <Text style={styles.modalSubtitle}>{t('lists.select_target_list')}</Text>
 
                 <FlatList
                   data={(lists || []).filter((l) => l.id !== selectedList.id)}
@@ -1021,7 +1021,7 @@ export default function ListsScreen({ navigation }) {
                   onPress={handleMoveConfirm}
                   disabled={!moveTargetListId}
                 >
-                  <Text style={styles.modalPrimaryText}>Continue</Text>
+                  <Text style={styles.modalPrimaryText}>{t('common.continue')}</Text>
                 </TouchableOpacity>
               </Pressable>
             </Pressable>
@@ -1162,14 +1162,14 @@ export default function ListsScreen({ navigation }) {
             {!hasLists ? (
               <View style={styles.emptyState}>
                 <Ionicons name="folder-open-outline" size={28} color={COLORS.textMuted} />
-                <Text style={styles.emptyTitle}>Create your first list</Text>
-                <Text style={styles.emptySubtitle}>Start collecting words you want to remember.</Text>
+                <Text style={styles.emptyTitle}>{t('lists.empty_cta')}</Text>
+                <Text style={styles.emptySubtitle}>{t('lists.empty_words_subtitle')}</Text>
                 <TouchableOpacity
                   style={styles.newListButton}
                   activeOpacity={0.6}
                   onPress={() => setNewListModalVisible(true)}
                 >
-                  <Text style={styles.newListText}>+ New list</Text>
+                  <Text style={styles.newListText}>+ {t('lists.new_list_btn')}</Text>
                 </TouchableOpacity>
               </View>
             ) : (
@@ -1213,7 +1213,7 @@ export default function ListsScreen({ navigation }) {
                           activeOpacity={0.8}
                         >
                           <Ionicons name="trash-outline" size={18} color={COLORS.surface} />
-                          <Text style={styles.swipeDeleteText}>Delete</Text>
+                          <Text style={styles.swipeDeleteText}>{t('common.delete')}</Text>
                         </TouchableOpacity>
                       )}
                       rightThreshold={40}
@@ -1228,7 +1228,7 @@ export default function ListsScreen({ navigation }) {
                   activeOpacity={0.6}
                   onPress={() => setNewListModalVisible(true)}
                 >
-                  <Text style={styles.newListText}>+ New list</Text>
+                  <Text style={styles.newListText}>+ {t('lists.new_list_btn')}</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -1247,13 +1247,13 @@ export default function ListsScreen({ navigation }) {
           <Pressable style={styles.overlay} onPress={() => setNewListModalVisible(false)}>
             <Pressable style={styles.modal} onPress={() => {}}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>New list</Text>
+                <Text style={styles.modalTitle}>{t('lists.new_list_title')}</Text>
                 <TouchableOpacity onPress={() => setNewListModalVisible(false)}>
                   <Text style={styles.modalClose}>✕</Text>
                 </TouchableOpacity>
               </View>
 
-              <Text style={styles.modalSubtitle}>Name</Text>
+              <Text style={styles.modalSubtitle}>{t('lists.name_label')}</Text>
               <TextInput
                 value={newListName}
                 onChangeText={setNewListName}
@@ -1275,7 +1275,7 @@ export default function ListsScreen({ navigation }) {
                 onPress={handleCreateNewList}
                 disabled={creatingList}
               >
-                <Text style={styles.modalPrimaryText}>{creatingList ? 'Creating…' : 'Create'}</Text>
+                <Text style={styles.modalPrimaryText}>{creatingList ? t('lists.creating') : t('common.create')}</Text>
               </TouchableOpacity>
             </Pressable>
           </Pressable>
