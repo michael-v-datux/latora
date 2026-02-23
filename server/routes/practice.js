@@ -9,6 +9,7 @@ const router = express.Router();
 
 const requireAuth = require("../middleware/requireAuth");
 const loadPlan    = require("../middleware/loadPlan");
+const { updateSkillProfile } = require("../lib/skillScoring");
 
 // GET /api/practice/stats — загальна статистика для головного екрану
 // ВАЖЛИВО: цей маршрут ПЕРЕД /:listId, щоб "stats" не матчився як listId
@@ -481,6 +482,11 @@ router.post("/practice/result", requireAuth, async (req, res, next) => {
       .then(({ error: evErr }) => {
         if (evErr) console.warn("⚠️ practice_events insert failed:", evErr.message);
       });
+
+    // ── 3. Оновлюємо skill profile (fire-and-forget) ────────────────────────
+    updateSkillProfile(supabase, userId, wordId, isCorrect).catch(e => {
+      console.warn("⚠️ skill profile update failed:", e.message);
+    });
 
     return res.json(data);
   } catch (error) {

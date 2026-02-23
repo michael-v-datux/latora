@@ -21,6 +21,7 @@ const router = express.Router();
 
 const requireAuth = require("../middleware/requireAuth");
 const { getEntitlements } = require("../config/entitlements");
+const { dominantWeakness, weaknessFilter } = require("../lib/skillScoring");
 
 // ─── Helper: get today's date string in UTC (YYYY-MM-DD) ────────────────────
 function todayUTC() {
@@ -37,10 +38,11 @@ async function getUserPlan(supabase, userId) {
   return data?.subscription_plan || "free";
 }
 
-// ─── Core: generate today's plan items (Smart scoring v1) ───────────────────
-// Quota: 40% weak (recent mistakes) · 40% due (overdue) · 20% new
+// ─── Core: generate today's plan items (Smart scoring v1 + ALE) ─────────────
+// Quota: 40% weak (recent mistakes + ALE skill targeting) · 40% due · 20% new
+// For Pro users with a dominant weakness, ALE-targeted words fill part of the weak slot.
 // Returns array of { word_id, list_id, order_index, slot_type }
-async function generatePlanItems(supabase, userId, targetCount) {
+async function generatePlanItems(supabase, userId, targetCount, skillProfile) {
   // 1. Get all words the user has in their lists
   const { data: lists, error: listsErr } = await supabase
     .from("lists")
@@ -52,16 +54,16 @@ async function generatePlanItems(supabase, userId, targetCount) {
   const listIds = (lists || []).map((l) => l.id);
   if (listIds.length === 0) return [];
 
-  // 2. Get all list_words with word data
+  // 2. Get all list_words with word data (include ALE factor columns for Pro skill targeting)
   const { data: listWords, error: lwErr } = await supabase
     .from("list_words")
-    .select("list_id, word_id, words(id, difficulty_score, cefr_level, created_at)")
+    .select("list_id, word_id, words(id, difficulty_score, cefr_level, created_at, frequency_band, polysemy_level, morph_complexity, phrase_flag)")
     .in("list_id", listIds);
 
   if (lwErr) throw lwErr;
 
   // Deduplicate words (same word can be in multiple lists — use first list)
-  const wordMap = new Map(); // word_id → { word_id, list_id, difficulty_score, created_at }
+  const wordMap = new Map(); // word_id → { word_id, list_id, difficulty_score, created_at, ...factor cols }
   for (const lw of listWords || []) {
     if (!lw.words) continue;
     if (!wordMap.has(lw.word_id)) {
@@ -70,6 +72,11 @@ async function generatePlanItems(supabase, userId, targetCount) {
         list_id:          lw.list_id,
         difficulty_score: lw.words.difficulty_score ?? 50,
         created_at:       lw.words.created_at || null,
+        // ALE factor columns
+        frequency_band:   lw.words.frequency_band   ?? null,
+        polysemy_level:   lw.words.polysemy_level   ?? null,
+        morph_complexity: lw.words.morph_complexity ?? null,
+        phrase_flag:      lw.words.phrase_flag      ?? false,
       });
     }
   }
@@ -135,34 +142,78 @@ async function generatePlanItems(supabase, userId, targetCount) {
     }
   }
 
-  // 5. Sort each bucket
+  // 5. ALE skill targeting (Pro only) — inject weakness-factor words into weak slot
+  // If the user has a dominant ALE weakness, we boost words matching that factor.
+  // These 'ale' slot words take up to half of the weak quota (20% of total).
+  const aleWords = [];
+  if (skillProfile) {
+    const { factor } = dominantWeakness(skillProfile);
+    const wf = factor ? weaknessFilter(factor) : null;
+
+    if (wf) {
+      for (const wordId of allWordIds) {
+        const wordInfo = wordMap.get(wordId);
+        if (!wordInfo) continue;
+
+        // Check if this word matches the ALE weakness filter
+        let matches = false;
+        if (wf.op === "gte" && wordInfo[wf.column] != null) {
+          matches = wordInfo[wf.column] >= wf.value;
+        } else if (wf.op === "eq") {
+          matches = wordInfo[wf.column] === wf.value;
+        }
+
+        if (matches) {
+          // Don't double-count words already in weakWords (keep only non-weak or new)
+          const alreadyWeak = weakWords.some(w => w.word_id === wordId);
+          if (!alreadyWeak) {
+            aleWords.push({ ...wordInfo, slot_type: 'ale', aleScore: 1 });
+          }
+        }
+      }
+      // Prioritize ALE words that are also due or new
+      aleWords.sort((a, b) => {
+        const aIsDue = dueWords.some(w => w.word_id === a.word_id) ? 1 : 0;
+        const bIsDue = dueWords.some(w => w.word_id === b.word_id) ? 1 : 0;
+        return bIsDue - aIsDue;
+      });
+    }
+  }
+
+  // 6. Sort each bucket
   weakWords.sort((a, b) => b.weakScore - a.weakScore);          // highest weak score first
   dueWords.sort((a, b) => b.overdueDays - a.overdueDays);       // most overdue first
   newWords.sort((a, b) => a.difficulty_score - b.difficulty_score); // easiest first
 
-  // 6. Fill quota: 40% weak · 40% due · 20% new (with fallback fill)
+  // 7. Fill quota: 40% weak (incl. ALE) · 40% due · 20% new (with fallback fill)
   const needed = Math.min(targetCount, allWordIds.length);
   const weakQuota = Math.round(needed * 0.4);
+  const aleQuota  = Math.round(weakQuota * 0.5); // ALE fills up to half the weak slot
   const newQuota  = Math.round(needed * 0.2);
-  const dueQuota  = needed - weakQuota - newQuota; // 40% remainder
+  const dueQuota  = needed - weakQuota - newQuota; // ~40% remainder
 
   const selected = [];
-  const addFrom = (pool, quota) => {
+  const selectedIds = new Set();
+
+  const addFrom = (pool, quota, slotType) => {
     for (const w of pool) {
       if (selected.length >= needed) break;
-      if (selected.filter(s => s.slot_type === w.slot_type).length >= quota) break;
+      if (selectedIds.has(w.word_id)) continue;
+      if (selected.filter(s => s.slot_type === slotType).length >= quota) break;
       selected.push(w);
+      selectedIds.add(w.word_id);
     }
   };
 
-  addFrom(weakWords, weakQuota);
-  addFrom(dueWords,  dueQuota);
-  addFrom(newWords,  newQuota);
+  // ALE-targeted words first (within weak quota), then regular weak, then due, then new
+  addFrom(aleWords,  aleQuota,  'ale');
+  addFrom(weakWords, weakQuota, 'weak');
+  addFrom(dueWords,  dueQuota,  'due');
+  addFrom(newWords,  newQuota,  'new');
 
   // Fill any remaining slots from remaining words (any type)
   if (selected.length < needed) {
-    const selectedIds = new Set(selected.map(w => w.word_id));
-    for (const pool of [dueWords, weakWords, newWords]) {
+    for (const pool of [dueWords, weakWords, aleWords, newWords]) {
       for (const w of pool) {
         if (selected.length >= needed) break;
         if (!selectedIds.has(w.word_id)) {
@@ -173,8 +224,9 @@ async function generatePlanItems(supabase, userId, targetCount) {
     }
   }
 
-  // 7. Map to plan items — weak first, then due, then new
+  // 8. Map to plan items — ALE + weak first, then due, then new
   const ordered = [
+    ...selected.filter(w => w.slot_type === 'ale'),
     ...selected.filter(w => w.slot_type === 'weak'),
     ...selected.filter(w => w.slot_type === 'due'),
     ...selected.filter(w => w.slot_type === 'new'),
@@ -196,9 +248,10 @@ router.get("/today", requireAuth, async (req, res, next) => {
     const userId = req.user.id;
     const today = todayUTC();
 
-    // Get plan
-    const plan = await getEntitlements(await getUserPlan(supabase, userId));
-    const targetCount = plan.dailyPlanSize;
+    // Get plan entitlements
+    const userPlan = await getUserPlan(supabase, userId);
+    const ent = getEntitlements(userPlan);
+    const targetCount = ent.dailyPlanSize;
 
     // 1. Look for existing plan for today
     const { data: existing, error: fetchErr } = await supabase
@@ -212,11 +265,22 @@ router.get("/today", requireAuth, async (req, res, next) => {
 
     if (existing) {
       // Return existing plan
-      return res.json(formatPlan(existing, plan));
+      return res.json(formatPlan(existing, ent));
     }
 
-    // 2. No plan yet — generate one
-    const items = await generatePlanItems(supabase, userId, targetCount);
+    // 2. Fetch skill profile for Pro users (ALE-weighted generation)
+    let skillProfile = null;
+    if (userPlan === "pro") {
+      const { data: sp } = await supabase
+        .from("user_skill_profile")
+        .select("frequency_score, polysemy_score, morph_score, idiom_score, total_updates")
+        .eq("user_id", userId)
+        .single();
+      skillProfile = sp ?? null;
+    }
+
+    // 3. No plan yet — generate one
+    const items = await generatePlanItems(supabase, userId, targetCount, skillProfile);
 
     // 3. Insert daily_plan
     const { data: newPlan, error: planErr } = await supabase
@@ -250,7 +314,7 @@ router.get("/today", requireAuth, async (req, res, next) => {
 
     if (fullErr) throw fullErr;
 
-    return res.json(formatPlan(fullPlan, plan));
+    return res.json(formatPlan(fullPlan, ent));
   } catch (error) {
     return next(error);
   }
@@ -306,8 +370,16 @@ router.post("/today/regen", requireAuth, async (req, res, next) => {
       planId = newPlan.id;
     }
 
+    // Fetch skill profile (regen is Pro-only, so always fetch)
+    const { data: sp } = await supabase
+      .from("user_skill_profile")
+      .select("frequency_score, polysemy_score, morph_score, idiom_score, total_updates")
+      .eq("user_id", userId)
+      .single();
+    const skillProfile = sp ?? null;
+
     // Generate new items
-    const items = await generatePlanItems(supabase, userId, targetCount);
+    const items = await generatePlanItems(supabase, userId, targetCount, skillProfile);
     if (items.length > 0) {
       await supabase
         .from("daily_plan_items")

@@ -4,6 +4,7 @@
  * GET /api/profile/me — профіль + subscription_plan + streak + cefr_distribution
  *                      + word_state_distribution + vocab_growth + vocab_velocity
  *                      + review_activity + difficulty_overview + weakness_map
+ *                      + skill_profile (ALE factor scores)
  */
 
 const express = require("express");
@@ -122,7 +123,7 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
     thirtyDaysAgo.setHours(0, 0, 0, 0);
 
-    const [progressRes, growthRes, eventsRes, factorRes] = await Promise.all([
+    const [progressRes, growthRes, eventsRes, factorRes, skillProfileRes] = await Promise.all([
       // user_word_progress: стани + personal_score + trend
       wordIds.length > 0
         ? supabase
@@ -154,6 +155,13 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
             .select("id, base_score, frequency_band, polysemy_level, morph_complexity, phrase_flag")
             .in("id", wordIds)
         : Promise.resolve({ data: [] }),
+
+      // user_skill_profile: ALE factor scores
+      supabase
+        .from("user_skill_profile")
+        .select("frequency_score, polysemy_score, morph_score, idiom_score, total_updates, updated_at")
+        .eq("user_id", userId)
+        .single(),
     ]);
 
     // ── 6. Обчислення: word_state_distribution ──────────────────────────────
@@ -331,7 +339,10 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
     const aiResetNeeded = !profile.ai_reset_date || profile.ai_reset_date !== todayUTC;
     const aiUsageToday  = aiResetNeeded ? 0 : (profile.ai_requests_today ?? 0);
 
-    // ── 12. Відповідь ────────────────────────────────────────────────────────
+    // ── 12. Skill profile (ALE) ───────────────────────────────────────────────
+    const skillProfile = skillProfileRes?.data ?? null;
+
+    // ── 13. Відповідь ────────────────────────────────────────────────────────
     return res.json({
       ...profile,
       streak,
@@ -343,6 +354,7 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
       mistake_heatmap: mistakeHeatmap,
       difficulty_overview: difficultyOverview,
       weakness_map: weaknessMap,
+      skill_profile: skillProfile,
       usage: {
         plan,
         ai_requests_today:  aiUsageToday,

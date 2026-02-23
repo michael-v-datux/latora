@@ -56,6 +56,14 @@ const WEAKNESS_FACTORS = [
   { key: "phrase_flag",      i18nKey: "word.factor_phrase", infoKey: "profile.factor_phrase_info" },
 ];
 
+// ALE factor definitions — map skill_profile field → i18n keys + info
+const ALE_FACTORS = [
+  { scoreKey: "frequency_score", labelKey: "profile.ale_factor_frequency", infoKey: "profile.ale_factor_freq_info", icon: "📊" },
+  { scoreKey: "polysemy_score",  labelKey: "profile.ale_factor_polysemy",  infoKey: "profile.ale_factor_poly_info", icon: "🔀" },
+  { scoreKey: "morph_score",     labelKey: "profile.ale_factor_morphology",infoKey: "profile.ale_factor_morph_info",icon: "🔤" },
+  { scoreKey: "idiom_score",     labelKey: "profile.ale_factor_idiom",     infoKey: "profile.ale_factor_idiom_info",icon: "💬" },
+];
+
 const SETTINGS = [
   { key: "profile.settings.notifications", icon: "notifications-outline" },
   { key: "profile.settings.export",        icon: "download-outline"       },
@@ -182,6 +190,71 @@ function FactorBarLocal({ label, value, color, avgDelta, infoText }) {
         <Text style={[styles.factorDelta, { color: deltaColor }]}>{deltaLabel}</Text>
       </View>
       {/* Розгорнутий tooltip */}
+      {infoVisible && (
+        <View style={styles.factorInfoBox}>
+          <Text style={styles.factorInfoText}>{infoText}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+/**
+ * AleScoreBar — Один рядок ALE skill profile:
+ *   icon · label ⓘ  ──────■───── [Weakness / Strength / Developing] (+3 pts)
+ * Score range: -100…+100. Bar centred at 50%, green=positive, red=negative.
+ */
+function AleScoreBar({ icon, label, score, infoText, t }) {
+  const [infoVisible, setInfoVisible] = useState(false);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (infoVisible) {
+      timerRef.current = setTimeout(() => setInfoVisible(false), 6000);
+    }
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [infoVisible]);
+
+  // Map score -100…+100 → bar fill 0…100%
+  const fillPct  = Math.round(Math.min(100, Math.max(0, 50 + score / 2)));
+  const isStrength = score > 15;
+  const isWeak     = score < -15;
+  const barColor   = isStrength ? "#16a34a" : isWeak ? "#dc2626" : COLORS.primary;
+  const statusKey  = isStrength ? "ale_score_strength" : isWeak ? "ale_score_weakness" : "ale_score_neutral";
+  const statusColor= isStrength ? "#16a34a" : isWeak ? "#dc2626" : COLORS.textMuted;
+  const scoreLabel = score >= 0 ? `+${score}` : `${score}`;
+
+  return (
+    <View style={{ marginBottom: 14 }}>
+      <View style={styles.factorRow}>
+        {/* Icon + Label + ⓘ */}
+        <View style={styles.factorLabelWrap}>
+          <Text style={{ fontSize: 13, marginRight: 2 }}>{icon}</Text>
+          <Text style={styles.factorLabel} numberOfLines={1}>{label}</Text>
+          <TouchableOpacity onPress={() => setInfoVisible(v => !v)} hitSlop={8} activeOpacity={0.7}>
+            <Ionicons
+              name={infoVisible ? "information-circle" : "information-circle-outline"}
+              size={14}
+              color={infoVisible ? COLORS.primary : COLORS.textHint}
+            />
+          </TouchableOpacity>
+        </View>
+        {/* Bar */}
+        <View style={styles.factorTrack}>
+          <View style={[styles.factorFill, { width: `${fillPct}%`, backgroundColor: barColor }]} />
+          <View style={styles.factorCenter} />
+        </View>
+        {/* Score */}
+        <Text style={[styles.factorDelta, { color: barColor }]}>{scoreLabel}</Text>
+      </View>
+      {/* Status chip */}
+      <View style={styles.aleStatusRow}>
+        <Text style={[styles.aleStatusText, { color: statusColor }]}>
+          {t(`profile.${statusKey}`)}
+        </Text>
+      </View>
+      {/* Info tooltip */}
       {infoVisible && (
         <View style={styles.factorInfoBox}>
           <Text style={styles.factorInfoText}>{infoText}</Text>
@@ -418,6 +491,10 @@ export default function ProfileScreen({ navigation }) {
   // Difficulty (Pro)
   const difficultyOverview = profileData?.difficulty_overview ?? null;
   const weaknessMap        = profileData?.weakness_map ?? null;
+
+  // ALE Skill Profile (all users — data is public, engine is Pro)
+  const skillProfile = profileData?.skill_profile ?? null;
+  const hasSkillData = skillProfile && (skillProfile.total_updates ?? 0) > 0;
 
   // Mistake Heatmap (30 днів)
   const mistakeHeatmap30 = profileData?.mistake_heatmap ?? [];
@@ -924,10 +1001,70 @@ export default function ProfileScreen({ navigation }) {
                   })}
                 </View>
               )}
+
             </>
           ) : (
             <LockedProBlock t={t} label={t("profile.pro_difficulty_lock")} onUnlock={openProScreen} />
           )
+        )}
+
+        {/* ── ALE Skill Profile (Difficulty tab, all users) ── */}
+        {activeTab === "difficulty" && !loading && (
+          <View style={styles.card}>
+            {/* Header row: title + active badge (Pro) or lock chip */}
+            <View style={styles.aleSectionHeader}>
+              <Text style={styles.sectionLabel}>{t("profile.ale_section")}</Text>
+              {isPro ? (
+                <View style={styles.aleActiveBadge}>
+                  <Text style={styles.aleActiveBadgeText}>{t("profile.ale_active_badge")}</Text>
+                </View>
+              ) : (
+                <TouchableOpacity onPress={openProScreen} activeOpacity={0.8} style={styles.aleProChip}>
+                  <Ionicons name="lock-closed" size={10} color="#ca8a04" />
+                  <Text style={styles.aleProChipText}>Pro</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <Text style={styles.weaknessHint}>{t("profile.ale_section_hint")}</Text>
+
+            {hasSkillData ? (
+              <>
+                {ALE_FACTORS.map((factor) => {
+                  const score = skillProfile[factor.scoreKey] ?? 0;
+                  return (
+                    <AleScoreBar
+                      key={factor.scoreKey}
+                      icon={factor.icon}
+                      label={t(factor.labelKey)}
+                      score={score}
+                      infoText={t(factor.infoKey)}
+                      t={t}
+                    />
+                  );
+                })}
+                <Text style={styles.aleUpdatesLabel}>
+                  {t("profile.ale_updates_count", { count: skillProfile.total_updates ?? 0 })}
+                </Text>
+              </>
+            ) : (
+              <View style={styles.emptyTabState}>
+                <Text style={styles.emptyTabIcon}>🧠</Text>
+                <Text style={styles.emptyTabTitle}>{t("profile.ale_no_data")}</Text>
+                <Text style={styles.emptyTabSub}>{t("profile.ale_no_data_sub")}</Text>
+              </View>
+            )}
+
+            {/* Free CTA — show for all Free users */}
+            {!isPro && (
+              <TouchableOpacity style={styles.aleFreeCta} onPress={openProScreen} activeOpacity={0.85}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.aleFreeCtatitle}>{t("profile.ale_free_cta_title")}</Text>
+                  <Text style={styles.aleFreeCtaBody}>{t("profile.ale_free_cta_body")}</Text>
+                </View>
+                <Text style={styles.aleFreeCtatBtn}>{t("profile.ale_free_cta_btn")}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         )}
 
         {/* ── 8. Налаштування ── */}
@@ -1223,6 +1360,20 @@ const styles = StyleSheet.create({
   factorValue:     { width: 28, fontSize: 11, color: COLORS.textMuted, textAlign: "right", fontFamily: "Courier" },
   factorInfoBox:   { marginTop: 6, marginBottom: 4, backgroundColor: COLORS.background, borderRadius: BORDER_RADIUS.md, padding: 10, borderWidth: 1, borderColor: COLORS.borderLight },
   factorInfoText:  { fontSize: 12, color: COLORS.textSecondary, lineHeight: 17 },
+
+  // ── ALE Skill Profile ──
+  aleSectionHeader:    { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 0 },
+  aleActiveBadge:      { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: "#dcfce7", borderWidth: 1, borderColor: "#86efac" },
+  aleActiveBadgeText:  { fontSize: 10, fontWeight: "700", color: "#15803d", letterSpacing: 0.3 },
+  aleProChip:          { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: "#fefce8", borderWidth: 1, borderColor: "#fde68a" },
+  aleProChipText:      { fontSize: 10, fontWeight: "700", color: "#ca8a04" },
+  aleStatusRow:        { marginTop: 2, marginBottom: 2, paddingLeft: 96 },
+  aleStatusText:       { fontSize: 10, fontWeight: "500" },
+  aleUpdatesLabel:     { fontSize: 10, color: COLORS.textHint, textAlign: "right", marginTop: 4 },
+  aleFreeCta:          { marginTop: 14, padding: 12, backgroundColor: "#fefce8", borderRadius: BORDER_RADIUS.md, borderWidth: 1, borderColor: "#fde68a", flexDirection: "row", alignItems: "center", gap: 10 },
+  aleFreeCtatitle:     { fontSize: 13, fontWeight: "700", color: "#92400e", marginBottom: 2 },
+  aleFreeCtaBody:      { fontSize: 11, color: "#78350f", lineHeight: 16 },
+  aleFreeCtatBtn:      { fontSize: 12, fontWeight: "700", color: "#ca8a04" },
 
   // ── Growth bar tooltip ──
   growthTooltip:      { position: "absolute", left: -16, right: -16, backgroundColor: COLORS.primary, borderRadius: BORDER_RADIUS.sm, paddingVertical: 5, paddingHorizontal: 4, alignItems: "center", zIndex: 10 },
