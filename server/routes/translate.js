@@ -114,12 +114,13 @@ function looksLikeWord(input) {
   const s = normalize(input);
   if (s.length < 2 || s.length > 120) return false;
 
-  // Дозволяємо: латиниця/кирилиця + пробіли + апострофи + дефіси
-  const ok = /^[a-zA-Z\u0400-\u04FF\s''-]+$/.test(s);
+  // Дозволяємо: літери + пробіли + апострофи + дефіси + термінальна пунктуація (?!.)
+  // ?/!/. потрібні для коротких розмовних фраз ("Як справи?", "Good morning!")
+  const ok = /^[a-zA-Z\u0400-\u04FF\s''.\-?!]+$/.test(s);
   if (!ok) return false;
 
-  // Відсікаємо латиницю без голосних (типу xqzvprm)
-  const isLatin = /^[a-zA-Z\s''-]+$/.test(s);
+  // Відсікаємо латиницю без голосних (типу xqzvprm) — пунктуацію ігноруємо при перевірці
+  const isLatin = /^[a-zA-Z\s''.\-?!]+$/.test(s);
   if (isLatin) {
     const hasVowel = /[aeiouy]/i.test(s);
     if (!hasVowel) return false;
