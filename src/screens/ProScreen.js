@@ -95,6 +95,11 @@ const PRO_FEATURES = [
     titleKey: 'pro.feature_ale_title',
     descKey:  'pro.feature_ale_desc',
   },
+  {
+    icon: 'globe-outline',
+    titleKey: 'pro.feature_lang_analytics_title',
+    descKey:  'pro.feature_lang_analytics_desc',
+  },
 ];
 
 // ─── Free plan: what's included (so users feel value, not deprivation) ────────

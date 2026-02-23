@@ -364,6 +364,8 @@
     "feature_difficulty_desc": "Understand exactly which word types are hardest for you personally.",
     "feature_ale_title": "Adaptive Language Engine",
     "feature_ale_desc": "AI-powered skill scoring automatically focuses your daily plan on your weakest linguistic areas — frequency, grammar, idioms, and more.",
+    "feature_lang_analytics_title": "Language Pair Analytics",
+    "feature_lang_analytics_desc": "See practice activity and accuracy per language pair. Understand your role breakdown — how well you recognise vs produce each language.",
     "choose_plan": "Choose your plan",
     "plan_monthly": "Monthly",
     "plan_yearly": "Yearly",
