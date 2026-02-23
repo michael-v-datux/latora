@@ -28,14 +28,17 @@ function todayUTC() {
   return new Date().toISOString().slice(0, 10);
 }
 
-// ─── Helper: get subscription plan for user ──────────────────────────────────
+// ─── Helper: get subscription plan + daily_goal for user ─────────────────────
 async function getUserPlan(supabase, userId) {
   const { data } = await supabase
     .from("profiles")
-    .select("subscription_plan")
+    .select("subscription_plan, daily_goal")
     .eq("id", userId)
     .single();
-  return data?.subscription_plan || "free";
+  return {
+    plan:      data?.subscription_plan || "free",
+    dailyGoal: data?.daily_goal        ?? null,   // null = not set → use ent default
+  };
 }
 
 // ─── Core: generate today's plan items (Smart scoring v1 + ALE) ─────────────
@@ -248,10 +251,13 @@ router.get("/today", requireAuth, async (req, res, next) => {
     const userId = req.user.id;
     const today = todayUTC();
 
-    // Get plan entitlements
-    const userPlan = await getUserPlan(supabase, userId);
+    // Get plan entitlements + user's daily goal setting
+    const { plan: userPlan, dailyGoal } = await getUserPlan(supabase, userId);
     const ent = getEntitlements(userPlan);
-    const targetCount = ent.dailyPlanSize;
+    // daily_goal from settings overrides entitlement default (capped to plan max)
+    const targetCount = dailyGoal
+      ? Math.max(1, Math.min(ent.dailyPlanSize, dailyGoal))
+      : ent.dailyPlanSize;
 
     // 1. Look for existing plan for today
     const { data: existing, error: fetchErr } = await supabase
@@ -328,7 +334,7 @@ router.post("/today/regen", requireAuth, async (req, res, next) => {
     const userId = req.user.id;
     const today = todayUTC();
 
-    const userPlan = await getUserPlan(supabase, userId);
+    const { plan: userPlan, dailyGoal } = await getUserPlan(supabase, userId);
     const ent = getEntitlements(userPlan);
 
     if (!ent.canRegenPlan) {
@@ -338,9 +344,13 @@ router.post("/today/regen", requireAuth, async (req, res, next) => {
       });
     }
 
-    const targetCount = req.body?.targetCount
-      ? Math.max(10, Math.min(50, parseInt(req.body.targetCount, 10) || ent.dailyPlanSize))
+    // Prefer: explicit body override > user's daily_goal setting > entitlement default
+    const baseCount = dailyGoal
+      ? Math.max(1, Math.min(ent.dailyPlanSize, dailyGoal))
       : ent.dailyPlanSize;
+    const targetCount = req.body?.targetCount
+      ? Math.max(1, Math.min(ent.dailyPlanSize, parseInt(req.body.targetCount, 10) || baseCount))
+      : baseCount;
 
     // Find or create plan record
     let planId;
@@ -401,7 +411,7 @@ router.post("/today/regen", requireAuth, async (req, res, next) => {
 
     if (fullErr) throw fullErr;
 
-    return res.json(formatPlan(fullPlan, getEntitlements(userPlan)));
+    return res.json(formatPlan(fullPlan, ent));
   } catch (error) {
     return next(error);
   }

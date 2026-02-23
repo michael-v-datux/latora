@@ -25,10 +25,7 @@ import {
   ScrollView,
   Image,
   ActivityIndicator,
-  Modal,
-  Platform,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
@@ -36,7 +33,6 @@ import { useAuth }  from "../hooks/useAuth";
 import { useI18n } from "../i18n";
 import { COLORS, CEFR_COLORS, SPACING, BORDER_RADIUS } from "../utils/constants";
 import { fetchMyProfile } from "../services/profileService";
-import { AVAILABLE_LANGUAGES, PLANNED_LANGUAGES } from "../config/languages";
 
 // ─── Константи ────────────────────────────────────────────────────────────────
 const CEFR_ORDER   = ["A1", "A2", "B1", "B2", "C1", "C2"];
@@ -62,13 +58,6 @@ const ALE_FACTORS = [
   { scoreKey: "polysemy_score",  labelKey: "profile.ale_factor_polysemy",  infoKey: "profile.ale_factor_poly_info", icon: "🔀" },
   { scoreKey: "morph_score",     labelKey: "profile.ale_factor_morphology",infoKey: "profile.ale_factor_morph_info",icon: "🔤" },
   { scoreKey: "idiom_score",     labelKey: "profile.ale_factor_idiom",     infoKey: "profile.ale_factor_idiom_info",icon: "💬" },
-];
-
-const SETTINGS = [
-  { key: "profile.settings.notifications", icon: "notifications-outline" },
-  { key: "profile.settings.export",        icon: "download-outline"       },
-  { key: "profile.settings.language_pair", icon: "language-outline"       },
-  { key: "profile.settings.about",         icon: "information-circle-outline" },
 ];
 
 // ─── Хелпери ──────────────────────────────────────────────────────────────────
@@ -392,20 +381,13 @@ function EmptyTabState({ icon, title, subtitle, btnLabel, onBtnPress }) {
 
 // ─── Головний компонент ───────────────────────────────────────────────────────
 export default function ProfileScreen({ navigation }) {
-  const { t, locale, setLocale } = useI18n();
-  const { user, signOut }        = useAuth();
-  const insets                   = useSafeAreaInsets();
+  const { t }    = useI18n();
+  const { user } = useAuth();
 
   const [profileData, setProfileData]         = useState(null);
   const [loading, setLoading]                 = useState(true);
-  const [langModalVisible, setLangModalVisible] = useState(false);
   const [activeTab, setActiveTab]             = useState("overview");
   const [growthWindow, setGrowthWindow]       = useState(7);
-
-  // Поточна мова
-  const currentLang = [...AVAILABLE_LANGUAGES, ...PLANNED_LANGUAGES].find(
-    (l) => l.code === locale
-  );
 
   // Завантаження профілю
   const loadProfile = useCallback(async () => {
@@ -571,9 +553,13 @@ export default function ProfileScreen({ navigation }) {
                 {profile.email || "—"}
               </Text>
             </View>
-            <TouchableOpacity style={styles.signOutPill} onPress={signOut} activeOpacity={0.7}>
-              <Ionicons name="log-out-outline" size={14} color="#dc2626" />
-              <Text style={styles.signOutPillText}>{t("profile.sign_out")}</Text>
+            <TouchableOpacity
+              style={styles.settingsGear}
+              onPress={() => navigation.navigate("Settings")}
+              activeOpacity={0.7}
+              hitSlop={8}
+            >
+              <Ionicons name="settings-outline" size={22} color={COLORS.textSecondary} />
             </TouchableOpacity>
           </View>
         </View>
@@ -1067,108 +1053,20 @@ export default function ProfileScreen({ navigation }) {
           </View>
         )}
 
-        {/* ── 8. Налаштування ── */}
-        <View style={styles.settingsCard}>
-          {SETTINGS.map((item, index) => (
-            <TouchableOpacity
-              key={item.key}
-              style={[
-                styles.settingItem,
-                index < SETTINGS.length - 1 && styles.settingBorder,
-              ]}
-              activeOpacity={0.6}
-            >
-              <View style={styles.settingLeft}>
-                <Ionicons name={item.icon} size={20} color={COLORS.textSecondary} />
-                <Text style={styles.settingLabel}>{t(item.key)}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={COLORS.textHint} />
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* ── 9. Рядок-тригер мови ── */}
+        {/* ── 8. Settings nav row ── */}
         <View style={styles.settingsCard}>
           <TouchableOpacity
             style={styles.settingItem}
-            onPress={() => setLangModalVisible(true)}
+            onPress={() => navigation.navigate("Settings")}
             activeOpacity={0.6}
           >
             <View style={styles.settingLeft}>
-              <Ionicons name="globe-outline" size={20} color={COLORS.textSecondary} />
-              <Text style={styles.settingLabel}>{t("profile.language_section")}</Text>
+              <Ionicons name="settings-outline" size={20} color={COLORS.textSecondary} />
+              <Text style={styles.settingLabel}>{t("settings.title")}</Text>
             </View>
-            <View style={styles.langTriggerRight}>
-              <Text style={styles.langTriggerValue}>
-                {currentLang ? `${currentLang.flag} ${currentLang.label}` : locale}
-              </Text>
-              <Ionicons name="chevron-forward" size={16} color={COLORS.textHint} />
-            </View>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.textHint} />
           </TouchableOpacity>
         </View>
-
-        {/* ── Modal вибору мови ── */}
-        <Modal
-          visible={langModalVisible}
-          animationType="slide"
-          presentationStyle="pageSheet"
-          onRequestClose={() => setLangModalVisible(false)}
-        >
-          <View style={[styles.modalContainer, { paddingBottom: insets.bottom + 16 }]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{t("profile.language_section")}</Text>
-              <TouchableOpacity onPress={() => setLangModalVisible(false)} hitSlop={8}>
-                <Ionicons name="close" size={22} color={COLORS.textSecondary} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <Text style={styles.langGroupLabel}>{t("profile.language_available")}</Text>
-              <View style={styles.langGroup}>
-                {AVAILABLE_LANGUAGES.map((lang, index) => {
-                  const isActive = locale === lang.code;
-                  return (
-                    <TouchableOpacity
-                      key={lang.code}
-                      style={[
-                        styles.langItem,
-                        index < AVAILABLE_LANGUAGES.length - 1 && styles.langItemBorder,
-                      ]}
-                      onPress={() => { setLocale(lang.code); setLangModalVisible(false); }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.langFlag}>{lang.flag}</Text>
-                      <Text style={[styles.langLabel, isActive && styles.langLabelActive]}>
-                        {lang.label}
-                      </Text>
-                      {isActive && (
-                        <Ionicons name="checkmark" size={18} color={COLORS.primary} />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-              <Text style={[styles.langGroupLabel, { marginTop: 24 }]}>
-                {t("profile.language_upcoming")}
-              </Text>
-              <View style={styles.langGroup}>
-                {PLANNED_LANGUAGES.map((lang, index) => (
-                  <View
-                    key={lang.code}
-                    style={[
-                      styles.langItem,
-                      styles.langItemDisabled,
-                      index < PLANNED_LANGUAGES.length - 1 && styles.langItemBorder,
-                    ]}
-                  >
-                    <Text style={styles.langFlag}>{lang.flag}</Text>
-                    <Text style={[styles.langLabel, styles.langLabelDisabled]}>{lang.label}</Text>
-                    <Text style={styles.langComingSoon}>{t("profile.language_coming_soon")}</Text>
-                  </View>
-                ))}
-              </View>
-            </ScrollView>
-          </View>
-        </Modal>
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -1242,18 +1140,9 @@ const styles = StyleSheet.create({
   profileName:  { fontSize: 15, color: COLORS.textSecondary, fontWeight: "600" },
   profileEmail: { marginTop: 2, fontSize: 12, color: COLORS.textMuted },
 
-  signOutPill: {
-    flexDirection: "row",
-    gap: 5,
-    alignItems: "center",
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#fecaca",
-    backgroundColor: "#fef2f2",
+  settingsGear: {
+    padding: 4,
   },
-  signOutPillText: { fontSize: 12, color: "#dc2626", fontWeight: "500" },
 
   // ── Стрік ──
   streakContent: { alignItems: "center", paddingTop: 4 },
@@ -1422,22 +1311,5 @@ const styles = StyleSheet.create({
   settingLeft:   { flexDirection: "row", alignItems: "center", gap: 12 },
   settingLabel:  { fontSize: 14, color: COLORS.textSecondary },
 
-  // ── Тригер мови ──
-  langTriggerRight:  { flexDirection: "row", alignItems: "center", gap: 6 },
-  langTriggerValue:  { fontSize: 14, color: COLORS.textMuted },
-
-  // ── Modal ──
-  modalContainer: { flex: 1, backgroundColor: COLORS.background, paddingHorizontal: SPACING.xl, paddingTop: SPACING.xl },
-  modalHeader:    { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 24 },
-  modalTitle:     { fontSize: 18, fontWeight: "600", color: COLORS.primary },
-  langGroupLabel: { fontSize: 11, color: COLORS.textMuted, fontWeight: "500", letterSpacing: 0.8, marginBottom: 6 },
-  langGroup:      { backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.lg, paddingHorizontal: SPACING.xl, borderWidth: 1, borderColor: COLORS.borderLight },
-  langItem:       { flexDirection: "row", alignItems: "center", paddingVertical: 13, gap: 12 },
-  langItemBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.borderLight },
-  langItemDisabled: { opacity: 0.4 },
-  langFlag:       { fontSize: 20 },
-  langLabel:      { flex: 1, fontSize: 15, color: COLORS.textSecondary, fontWeight: "400" },
-  langLabelActive:   { color: COLORS.primary, fontWeight: "600" },
-  langLabelDisabled: { color: COLORS.textMuted },
-  langComingSoon:    { fontSize: 12, color: COLORS.textHint, fontStyle: "italic" },
 });
+

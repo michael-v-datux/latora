@@ -23,17 +23,28 @@ import ListsScreen from '../screens/ListsScreen';
 import PracticeScreen from '../screens/PracticeScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import ProScreen from '../screens/ProScreen';
+import SettingsScreen, {
+  NotificationsScreen,
+  AppLanguageScreen,
+  AboutScreen,
+  DeleteAccountScreen,
+} from '../screens/SettingsScreen';
 
 // Створюємо навігатори
 const Tab = createBottomTabNavigator();
 const ProfileStack = createNativeStackNavigator();
 
-// Profile tab — stack so ProfileScreen can push to ProScreen
+// Profile tab — stack so ProfileScreen can push to ProScreen / Settings / etc.
 function ProfileStackNavigator() {
   return (
     <ProfileStack.Navigator screenOptions={{ headerShown: false }}>
-      <ProfileStack.Screen name="ProfileMain" component={ProfileScreen} />
-      <ProfileStack.Screen name="ProScreen" component={ProScreen} />
+      <ProfileStack.Screen name="ProfileMain"    component={ProfileScreen} />
+      <ProfileStack.Screen name="ProScreen"      component={ProScreen} />
+      <ProfileStack.Screen name="Settings"       component={SettingsScreen} />
+      <ProfileStack.Screen name="Notifications"  component={NotificationsScreen} />
+      <ProfileStack.Screen name="AppLanguage"    component={AppLanguageScreen} />
+      <ProfileStack.Screen name="About"          component={AboutScreen} />
+      <ProfileStack.Screen name="DeleteAccount"  component={DeleteAccountScreen} />
     </ProfileStack.Navigator>
   );
 }

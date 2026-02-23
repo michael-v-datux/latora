@@ -29,6 +29,7 @@ const subscriptionRoutes = require('./routes/subscription');
 const todayRoutes        = require('./routes/today');
 const wordsRoutes        = require('./routes/words');
 const settingsRoutes     = require('./routes/settings');
+const accountRoutes      = require('./routes/account');
 
 const errorHandler = require("./middleware/error");
 
@@ -76,6 +77,7 @@ app.use('/api', subscriptionRoutes);
 app.use('/api', todayRoutes);
 app.use('/api', wordsRoutes);
 app.use('/api', settingsRoutes);
+app.use('/api', accountRoutes);
 
 // === Health check (перевірка що сервер працює) ===
 app.get('/api/health', (req, res) => {

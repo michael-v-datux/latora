@@ -6,8 +6,9 @@
  * 2. Server = source of truth (fetch on app open, update in background on change)
  *
  * Usage:
- *   const settings = await loadSettings(userId);        // reads cache + syncs from server
- *   await saveSettings(userId, { ui_lang: 'uk' });      // writes cache + patches server
+ *   const settings = await loadSettings(userId);            // reads cache + syncs from server
+ *   await saveSettings(userId, { daily_goal: 10 });         // writes cache + patches server
+ *   await deleteAccount();                                  // DELETE /api/account
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -15,11 +16,16 @@ import { api } from './apiClient';
 
 const SETTINGS_KEY = (userId) => `user_settings_${userId}`;
 
-const DEFAULT_SETTINGS = {
-  ui_lang: null,
-  source_lang: null,
-  target_lang: null,
-  difficulty_mode: null,
+export const DEFAULT_SETTINGS = {
+  ui_lang:               null,
+  source_lang:           null,
+  target_lang:           null,
+  difficulty_mode:       null,
+  daily_goal:            10,
+  reminders_enabled:     false,
+  reminder_practice:     false,
+  reminder_today:        false,
+  translation_direction: 'auto',
 };
 
 /**
@@ -59,10 +65,15 @@ export async function fetchAndCacheSettings(userId) {
   try {
     const res = await api.get('/settings');
     const serverSettings = {
-      ui_lang:         res.data.ui_lang         ?? null,
-      source_lang:     res.data.source_lang     ?? null,
-      target_lang:     res.data.target_lang     ?? null,
-      difficulty_mode: res.data.difficulty_mode ?? null,
+      ui_lang:               res.data.ui_lang               ?? null,
+      source_lang:           res.data.source_lang           ?? null,
+      target_lang:           res.data.target_lang           ?? null,
+      difficulty_mode:       res.data.difficulty_mode       ?? null,
+      daily_goal:            res.data.daily_goal            ?? 10,
+      reminders_enabled:     res.data.reminders_enabled     ?? false,
+      reminder_practice:     res.data.reminder_practice     ?? false,
+      reminder_today:        res.data.reminder_today        ?? false,
+      translation_direction: res.data.translation_direction ?? 'auto',
     };
 
     // Update cache
@@ -80,7 +91,7 @@ export async function fetchAndCacheSettings(userId) {
  * @returns {Promise<object>} updated settings
  */
 export async function saveSettings(userId, updates) {
-  if (!userId) return;
+  if (!userId) return { ...DEFAULT_SETTINGS };
 
   const key = SETTINGS_KEY(userId);
 
@@ -94,7 +105,7 @@ export async function saveSettings(userId, updates) {
   // 2. Merge updates
   const merged = { ...current, ...updates };
 
-  // 3. Write to cache immediately
+  // 3. Write to cache immediately (optimistic)
   try {
     await AsyncStorage.setItem(key, JSON.stringify(merged));
   } catch {}
@@ -116,4 +127,15 @@ export async function clearSettingsCache(userId) {
   try {
     await AsyncStorage.removeItem(SETTINGS_KEY(userId));
   } catch {}
+}
+
+/**
+ * Delete the current user's account and all associated data.
+ * Calls DELETE /api/account — server handles data cleanup + auth.admin.deleteUser().
+ * @returns {Promise<void>}
+ * @throws if server returns an error
+ */
+export async function deleteAccount() {
+  const res = await api.delete('/account');
+  return res.data;
 }
