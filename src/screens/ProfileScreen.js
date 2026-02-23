@@ -426,6 +426,58 @@ function InfoSectionHeader({ label, infoText, style }) {
   );
 }
 
+/**
+ * AleHeaderRow — Заголовок ALE-блоку з ⓘ та бейджем Active/Pro в одному рядку.
+ *
+ * Label + ⓘ зліва, бейдж справа. Тултіп розгортається під рядком (повна ширина).
+ */
+function AleHeaderRow({ label, infoText, isPro, onUnlock, t }) {
+  const [visible, setVisible] = useState(false);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (visible) {
+      timerRef.current = setTimeout(() => setVisible(false), 8000);
+    }
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [visible]);
+
+  return (
+    <View style={{ marginBottom: 8 }}>
+      {/* Top row: label + ⓘ  +  badge */}
+      <View style={styles.aleHeaderTopRow}>
+        <View style={styles.infoHeaderRow}>
+          <Text style={[styles.sectionLabel, { marginBottom: 0 }]}>{label}</Text>
+          <TouchableOpacity onPress={() => setVisible(v => !v)} hitSlop={8} activeOpacity={0.7}>
+            <Ionicons
+              name={visible ? "information-circle" : "information-circle-outline"}
+              size={14}
+              color={visible ? COLORS.primary : COLORS.textHint}
+            />
+          </TouchableOpacity>
+        </View>
+        {isPro ? (
+          <View style={styles.aleActiveBadge}>
+            <Text style={styles.aleActiveBadgeText}>{t("profile.ale_active_badge")}</Text>
+          </View>
+        ) : (
+          <TouchableOpacity onPress={onUnlock} activeOpacity={0.8} style={styles.aleProChip}>
+            <Ionicons name="lock-closed" size={10} color="#ca8a04" />
+            <Text style={styles.aleProChipText}>Pro</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+      {/* Tooltip — full width, below the row */}
+      {visible && (
+        <View style={styles.infoTooltipBox}>
+          <Text style={styles.infoTooltipText}>{infoText}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ─── Головний компонент ───────────────────────────────────────────────────────
 export default function ProfileScreen({ navigation }) {
   const { t }    = useI18n();
@@ -591,32 +643,6 @@ export default function ProfileScreen({ navigation }) {
           )}
         </TouchableOpacity>
 
-        {/* ── 2. Картка профілю ── */}
-        <View style={styles.profileCard}>
-          <View style={styles.profileRow}>
-            <View style={styles.avatarWrap}>
-              {profile.avatarUrl ? (
-                <Image source={{ uri: profile.avatarUrl }} style={styles.avatarImg} />
-              ) : (
-                <Ionicons name="person-circle-outline" size={42} color={COLORS.textHint} />
-              )}
-            </View>
-            <View style={styles.profileText}>
-              <Text style={styles.profileName} numberOfLines={1}>
-                {profile.fullName || t("profile.signed_in")}
-              </Text>
-            </View>
-            <TouchableOpacity
-              style={styles.settingsGear}
-              onPress={() => navigation.navigate("Settings")}
-              activeOpacity={0.7}
-              hitSlop={8}
-            >
-              <Ionicons name="settings-outline" size={22} color={COLORS.textSecondary} />
-            </TouchableOpacity>
-          </View>
-        </View>
-
         {/* ── 3. Стрік ── */}
         <View style={styles.card}>
           <Text style={styles.sectionLabel}>{t("profile.streak_section")}</Text>
@@ -678,29 +704,33 @@ export default function ProfileScreen({ navigation }) {
         {/* ── 5. Most Active Level (inline) ── */}
         {!loading && mostActiveLevel && (
           <View style={[styles.card, styles.mostActiveCard]}>
-            <Text style={styles.sectionLabel}>{t("profile.most_active_label")}</Text>
             <View style={styles.mostActiveRow}>
-              <View
-                style={[
-                  styles.mostActiveBadge,
-                  {
-                    backgroundColor: (CEFR_COLORS[mostActiveLevel] || "#94a3b8") + "22",
-                    borderColor:     (CEFR_COLORS[mostActiveLevel] || "#94a3b8") + "55",
-                  },
-                ]}
-              >
-                <Text
+              <Text style={[styles.sectionLabel, { marginBottom: 0, flex: 1 }]}>
+                {t("profile.most_active_label")}
+              </Text>
+              <View style={styles.mostActiveBadgeWrap}>
+                <View
                   style={[
-                    styles.mostActiveBadgeText,
-                    { color: CEFR_COLORS[mostActiveLevel] || "#94a3b8" },
+                    styles.mostActiveBadge,
+                    {
+                      backgroundColor: (CEFR_COLORS[mostActiveLevel] || "#94a3b8") + "22",
+                      borderColor:     (CEFR_COLORS[mostActiveLevel] || "#94a3b8") + "55",
+                    },
                   ]}
                 >
-                  {mostActiveLevel}
+                  <Text
+                    style={[
+                      styles.mostActiveBadgeText,
+                      { color: CEFR_COLORS[mostActiveLevel] || "#94a3b8" },
+                    ]}
+                  >
+                    {mostActiveLevel}
+                  </Text>
+                </View>
+                <Text style={styles.mostActiveSubtext}>
+                  {cefrDist[mostActiveLevel]} {t("profile.most_active_desc")}
                 </Text>
               </View>
-              <Text style={styles.mostActiveSubtext}>
-                {cefrDist[mostActiveLevel]} {t("profile.most_active_desc")}
-              </Text>
             </View>
           </View>
         )}
@@ -1034,7 +1064,10 @@ export default function ProfileScreen({ navigation }) {
               {/* Weakness Map */}
               {!loading && difficultyOverview && (
                 <View style={styles.card}>
-                  <Text style={styles.sectionLabel}>{t("profile.weakness_map_section")}</Text>
+                  <InfoSectionHeader
+                    label={t("profile.weakness_map_section")}
+                    infoText={t("profile.info_weakness_map")}
+                  />
                   <Text style={styles.weaknessHint}>{t("profile.weakness_map_hint")}</Text>
                   {WEAKNESS_FACTORS.map((factor) => {
                     const data = weaknessMap?.[factor.key];
@@ -1067,25 +1100,14 @@ export default function ProfileScreen({ navigation }) {
         {/* ── ALE Skill Profile (Difficulty tab, all users) ── */}
         {activeTab === "difficulty" && !loading && (
           <View style={styles.card}>
-            {/* Header: title + ⓘ — full width so tooltip expands properly */}
-            <InfoSectionHeader
+            {/* Header row: label + ⓘ on left, Active/Pro badge on right */}
+            <AleHeaderRow
               label={t("profile.ale_section")}
               infoText={t("profile.info_ale")}
-              style={{ marginBottom: 4 }}
+              isPro={isPro}
+              onUnlock={openProScreen}
+              t={t}
             />
-            {/* Badge row: Pro active / lock chip */}
-            <View style={styles.aleBadgeRow}>
-              {isPro ? (
-                <View style={styles.aleActiveBadge}>
-                  <Text style={styles.aleActiveBadgeText}>{t("profile.ale_active_badge")}</Text>
-                </View>
-              ) : (
-                <TouchableOpacity onPress={openProScreen} activeOpacity={0.8} style={styles.aleProChip}>
-                  <Ionicons name="lock-closed" size={10} color="#ca8a04" />
-                  <Text style={styles.aleProChipText}>Pro</Text>
-                </TouchableOpacity>
-              )}
-            </View>
             <Text style={styles.weaknessHint}>{t("profile.ale_section_hint")}</Text>
 
             {hasSkillData ? (
@@ -1404,8 +1426,9 @@ const styles = StyleSheet.create({
   stateBarFill:  { height: 3, borderRadius: 2 },
 
   // ── Most Active Level ──
-  mostActiveCard:      { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: SPACING.md },
-  mostActiveRow:       { flexDirection: "row", alignItems: "center", gap: 8 },
+  mostActiveCard:      { paddingVertical: SPACING.md },
+  mostActiveRow:       { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  mostActiveBadgeWrap: { flexDirection: "row", alignItems: "center", gap: 8 },
   mostActiveBadge:     { paddingHorizontal: 10, paddingVertical: 4, borderRadius: BORDER_RADIUS.sm, borderWidth: 1 },
   mostActiveBadgeText: { fontSize: 13, fontWeight: "700", fontFamily: "Courier" },
   mostActiveSubtext:   { fontSize: 12, color: COLORS.textMuted },
@@ -1486,6 +1509,7 @@ const styles = StyleSheet.create({
   // ── ALE Skill Profile ──
   aleSectionHeader:    { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 0 },
   aleBadgeRow:         { flexDirection: "row", marginBottom: 8 },
+  aleHeaderTopRow:     { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
   aleActiveBadge:      { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: "#dcfce7", borderWidth: 1, borderColor: "#86efac" },
   aleActiveBadgeText:  { fontSize: 10, fontWeight: "700", color: "#15803d", letterSpacing: 0.3 },
   aleProChip:          { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: "#fefce8", borderWidth: 1, borderColor: "#fde68a" },

@@ -679,13 +679,13 @@ const handleSwap = () => {
             )}
             {isHistAdded ? (
               <View style={styles.historyAddedRow}>
-                <Text style={styles.historyAddedText}>✓ Added to list</Text>
+                <Text style={styles.historyAddedText}>✓ {t('lists.added_to_list_short')}</Text>
                 <TouchableOpacity
                   style={styles.historyRevertBtn}
                   onPress={() => handleHistoryRevert(histWord)}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.historyRevertText}>Revert</Text>
+                  <Text style={styles.historyRevertText}>{t('word.revert')}</Text>
                 </TouchableOpacity>
               </View>
             ) : (
@@ -694,7 +694,7 @@ const handleSwap = () => {
                 onPress={() => openHistoryWordModal(histWord)}
                 activeOpacity={0.7}
               >
-                <Text style={styles.historyAddBtnText}>+ Add to list</Text>
+                <Text style={styles.historyAddBtnText}>+ {t('lists.add_to_list')}</Text>
               </TouchableOpacity>
             )}
           </View>

@@ -97,7 +97,12 @@
     "trend_harder": "Getting harder ↘",
     "trend_stable": "Stable →",
     "tap_to_expand": "Details",
-    "ai_reason": "AI:"
+    "ai_reason": "AI:",
+    "revert": "Undo",
+    "info_breakdown": "How the difficulty score is calculated: Base score (vocabulary frequency + polysemy + morphology), adjusted by AI context analysis.",
+    "info_freq": "Frequency — how common this word is in everyday speech. Rare words score higher difficulty.",
+    "info_poly": "Polysemy — how many different meanings this word has. More meanings = harder to master.",
+    "info_morph": "Morphology — how complex the word's structure is (prefixes, suffixes, irregular forms)."
   },
   "lists": {
     "title": "My Lists",
@@ -271,6 +276,7 @@
     "info_heatmap": "Each square is one day. Green = high accuracy, red = lots of mistakes, white = no practice. A row of greens means you're on a streak. Reds show which days were tough — that's normal and useful to know.",
     "info_difficulty_overview": "Your personal difficulty score is calculated based on how you actually perform — not just how hard the words are in general. A lower score means the words in your lists feel easier for you. The trend arrow shows whether your practice is getting easier (↗) or harder (↘) over time.",
     "info_ale": "The Adaptive Engine watches how you answer different types of words and builds a picture of your strengths and weak spots. It then adjusts your daily practice plan to focus more on the areas where you need the most work — so your time is spent where it matters most.",
+    "info_weakness_map": "Shows which word characteristics are hardest for you. Bars to the right (red) mean words with that feature tend to be harder for you than average. Bars to the left (green) mean they feel easier. Use this to understand where to focus.",
     "lang_empty_title": "No languages yet",
     "lang_empty_sub": "Save words to see your language pair statistics.",
     "lang_pairs_section": "LANGUAGE PAIRS",

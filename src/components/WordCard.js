@@ -17,12 +17,38 @@
  *   - Factor bars: Frequency, Polysemy, Morphology, Phrase, Length
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import CefrBadge from './CefrBadge';
 import DifficultyBar from './DifficultyBar';
 import { COLORS, CEFR_COLORS, SPACING, BORDER_RADIUS } from '../utils/constants';
 import { useI18n } from '../i18n';
+
+// ─── POS localisation lookup ─────────────────────────────────────────────────
+// Server returns part_of_speech in English. Map to UI language display strings.
+const POS_I18N = {
+  en: {
+    noun: 'noun', verb: 'verb', adjective: 'adjective', adverb: 'adverb',
+    pronoun: 'pronoun', preposition: 'preposition', conjunction: 'conjunction',
+    interjection: 'interjection', article: 'article', numeral: 'numeral',
+    particle: 'particle', phrase: 'phrase', idiom: 'idiom',
+  },
+  uk: {
+    noun: 'іменник', verb: 'дієслово', adjective: 'прикметник', adverb: 'прислівник',
+    pronoun: 'займенник', preposition: 'прийменник', conjunction: 'сполучник',
+    interjection: 'вигук', article: 'артикль', numeral: 'числівник',
+    particle: 'частка', phrase: 'фраза', idiom: 'ідіома',
+  },
+};
+
+/** Returns localised POS label (falls back to original if no match found). */
+function localisePOS(pos, locale) {
+  if (!pos) return null;
+  const normalized = pos.toString().toLowerCase().trim();
+  const dict = POS_I18N[locale] || POS_I18N.en;
+  return dict[normalized] || pos;
+}
 
 // ─── Helper: підсвічування слова у прикладі ───────────────────────────────────
 
@@ -102,27 +128,117 @@ function confidenceLabel(score) {
   return 'confidence_low';
 }
 
+// ─── Inline info tooltip button (label + ⓘ, tooltip below, 6s auto-dismiss) ───
+
+function InfoLabel({ label, infoText, style }) {
+  const [visible, setVisible] = useState(false);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (visible) {
+      timerRef.current = setTimeout(() => setVisible(false), 6000);
+    }
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [visible]);
+
+  return (
+    <View style={style}>
+      <View style={ilStyles.row}>
+        <Text style={ilStyles.label}>{label}</Text>
+        {!!infoText && (
+          <TouchableOpacity onPress={() => setVisible(v => !v)} hitSlop={8} activeOpacity={0.7}>
+            <Ionicons
+              name={visible ? 'information-circle' : 'information-circle-outline'}
+              size={13}
+              color={visible ? COLORS.primary : COLORS.textHint}
+            />
+          </TouchableOpacity>
+        )}
+      </View>
+      {visible && (
+        <View style={ilStyles.tooltip}>
+          <Text style={ilStyles.tooltipText}>{infoText}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const ilStyles = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 },
+  label: { fontSize: 11, color: COLORS.textMuted, letterSpacing: 0.8, fontWeight: '500' },
+  tooltip: {
+    marginBottom: 8,
+    padding: 10,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    backgroundColor: '#fafbfc',
+  },
+  tooltipText: { fontSize: 12, color: COLORS.textSecondary, lineHeight: 18 },
+});
+
 // ─── Small factor bar (0–100) ─────────────────────────────────────────────────
 
-function FactorBar({ label, value, max = 100, color = '#2563eb' }) {
+function FactorBar({ label, value, max = 100, color = '#2563eb', infoText }) {
+  const [infoVisible, setInfoVisible] = useState(false);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (infoVisible) {
+      timerRef.current = setTimeout(() => setInfoVisible(false), 6000);
+    }
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [infoVisible]);
+
   const pct = Math.min(100, Math.max(0, ((value || 0) / max) * 100));
   return (
-    <View style={fbStyles.row}>
-      <Text style={fbStyles.label}>{label}</Text>
-      <View style={fbStyles.track}>
-        <View style={[fbStyles.fill, { width: `${pct}%`, backgroundColor: color }]} />
+    <View style={{ marginBottom: 6 }}>
+      <View style={fbStyles.row}>
+        <View style={fbStyles.labelWrap}>
+          <Text style={fbStyles.label}>{label}</Text>
+          {!!infoText && (
+            <TouchableOpacity onPress={() => setInfoVisible(v => !v)} hitSlop={8} activeOpacity={0.7}>
+              <Ionicons
+                name={infoVisible ? 'information-circle' : 'information-circle-outline'}
+                size={12}
+                color={infoVisible ? COLORS.primary : COLORS.textHint}
+              />
+            </TouchableOpacity>
+          )}
+        </View>
+        <View style={fbStyles.track}>
+          <View style={[fbStyles.fill, { width: `${pct}%`, backgroundColor: color }]} />
+        </View>
+        <Text style={fbStyles.value}>{value ?? '—'}</Text>
       </View>
-      <Text style={fbStyles.value}>{value ?? '—'}</Text>
+      {infoVisible && (
+        <View style={fbStyles.infoBox}>
+          <Text style={fbStyles.infoText}>{infoText}</Text>
+        </View>
+      )}
     </View>
   );
 }
 
 const fbStyles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8 },
-  label: { fontSize: 11, color: COLORS.textMuted, width: 86 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  labelWrap: { flexDirection: 'row', alignItems: 'center', gap: 3, width: 90 },
+  label: { fontSize: 11, color: COLORS.textMuted },
   track: { flex: 1, height: 4, backgroundColor: COLORS.borderLight, borderRadius: 2, overflow: 'hidden' },
   fill: { height: '100%', borderRadius: 2 },
   value: { fontSize: 11, color: COLORS.textSecondary, fontFamily: 'Courier', width: 24, textAlign: 'right' },
+  infoBox: {
+    marginTop: 4,
+    padding: 8,
+    borderRadius: BORDER_RADIUS.sm,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    backgroundColor: '#fafbfc',
+  },
+  infoText: { fontSize: 11, color: COLORS.textSecondary, lineHeight: 16 },
 });
 
 // ─── Band → score helper (1–5 → 80/60/40/20/5) ────────────────────────────────
@@ -137,7 +253,7 @@ function bandToScore(band) {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function WordCard({ word, onAddToList, isAdded = false, onRevert = null }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [idiomView, setIdiomView] = useState('idiomatic');
 
@@ -187,7 +303,11 @@ export default function WordCard({ word, onAddToList, isAdded = false, onRevert 
               {(word.source_lang || 'EN')} → {(word.target_lang || 'UK')}
             </Text>
           )}
-          <Text style={styles.partOfSpeech}>{word.part_of_speech || word.pos}</Text>
+          {(word.part_of_speech || word.pos) && (
+            <Text style={styles.partOfSpeech}>
+              {localisePOS(word.part_of_speech || word.pos, locale)}
+            </Text>
+          )}
         </View>
       </View>
 
@@ -303,7 +423,7 @@ export default function WordCard({ word, onAddToList, isAdded = false, onRevert 
       {/* ─── Expanded: full breakdown ─── */}
       {expanded && hasV2Data && (
         <View style={styles.breakdownBox}>
-          <Text style={styles.sectionLabel}>{t('word.breakdown')}</Text>
+          <InfoLabel label={t('word.breakdown')} infoText={t('word.info_breakdown')} />
 
           {/* Score pills row */}
           <View style={styles.scoreBreakdownRow}>
@@ -350,6 +470,7 @@ export default function WordCard({ word, onAddToList, isAdded = false, onRevert 
                 label={t('word.factor_freq')}
                 value={bandToScore(freqBand)}
                 color="#2563eb"
+                infoText={t('word.info_freq')}
               />
             )}
             {polysemy != null && (
@@ -357,6 +478,7 @@ export default function WordCard({ word, onAddToList, isAdded = false, onRevert 
                 label={t('word.factor_poly')}
                 value={Math.round(((polysemy - 1) / 4) * 100)}
                 color="#7c3aed"
+                infoText={t('word.info_poly')}
               />
             )}
             {morphCx != null && (
@@ -364,6 +486,7 @@ export default function WordCard({ word, onAddToList, isAdded = false, onRevert 
                 label={t('word.factor_morph')}
                 value={Math.round(((morphCx - 1) / 4) * 100)}
                 color="#ea580c"
+                infoText={t('word.info_morph')}
               />
             )}
             {phraseFlag && (
@@ -399,7 +522,7 @@ export default function WordCard({ word, onAddToList, isAdded = false, onRevert 
       {isAdded ? (
         <View style={styles.addedRow}>
           <View style={styles.addedLabel}>
-            <Text style={styles.addedLabelText}>✓ Added to list</Text>
+            <Text style={styles.addedLabelText}>✓ {t('lists.added_to_list_short')}</Text>
           </View>
           {onRevert && (
             <TouchableOpacity
@@ -407,7 +530,7 @@ export default function WordCard({ word, onAddToList, isAdded = false, onRevert 
               onPress={onRevert}
               activeOpacity={0.7}
             >
-              <Text style={styles.revertBtnText}>Revert</Text>
+              <Text style={styles.revertBtnText}>{t('word.revert')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -417,7 +540,7 @@ export default function WordCard({ word, onAddToList, isAdded = false, onRevert 
           onPress={onAddToList}
           activeOpacity={0.7}
         >
-          <Text style={styles.addButtonText}>+ Add to list</Text>
+          <Text style={styles.addButtonText}>+ {t('lists.add_to_list')}</Text>
         </TouchableOpacity>
       )}
     </View>
