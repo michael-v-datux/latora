@@ -600,8 +600,7 @@ export default function ListsScreen({ navigation }) {
             </View>
           )}
 
-          {/* ── Filter bar: row 1 — CEFR / State / Due ── */}
-          {/* Each control is hidden when there's nothing to filter by */}
+          {/* ── Filter bar — wraps automatically to new lines as needed ── */}
           {!loadingDetails && words.length > 0 && !bulkMode && (
             <View style={styles.filterSection}>
               {/* CEFR dropdown — only if list has 2+ distinct CEFR levels */}
@@ -627,7 +626,6 @@ export default function ListsScreen({ navigation }) {
               )}
 
               {/* State dropdown (Pro) — only if list has 2+ distinct states */}
-              {/* Lock pill for Free — only if list has 2+ states (same condition) */}
               {availableFilters.states.length > 1 && (
                 isPro ? (
                   <TouchableOpacity
@@ -669,54 +667,39 @@ export default function ListsScreen({ navigation }) {
                 </TouchableOpacity>
               )}
 
-              {/* Reset — only when a filter is active */}
-              {(cefrFilter.length > 0 || stateFilter !== 'all' || dueOnly) && (
+              {/* Language pair filter — only when list has mixed langs */}
+              {hasMixedLangs && (
+                <TouchableOpacity
+                  style={[styles.filterDropBtn, langPairFilter !== null && styles.filterDropBtnActive]}
+                  onPress={() => {
+                    setLangPairDropOpen((v) => !v);
+                    setCefrDropOpen(false);
+                    setStateDropOpen(false);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.filterDropText, langPairFilter !== null && styles.filterDropTextActive]}>
+                    {langPairFilter ?? t('lists.filter_all_pairs')}
+                  </Text>
+                  <Ionicons
+                    name={langPairDropOpen ? 'chevron-up' : 'chevron-down'}
+                    size={12}
+                    color={langPairFilter !== null ? '#ffffff' : COLORS.textSecondary}
+                  />
+                </TouchableOpacity>
+              )}
+
+              {/* Reset — clears all active filters */}
+              {hasActiveFilter && (
                 <TouchableOpacity
                   style={styles.filterResetBtn}
                   onPress={() => {
                     setCefrFilter([]);
                     setStateFilter('all');
                     setDueOnly(false);
+                    setLangPairFilter(null);
                     setCefrDropOpen(false);
                     setStateDropOpen(false);
-                  }}
-                  activeOpacity={0.7}
-                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                >
-                  <Ionicons name="close-circle" size={18} color="#dc2626" />
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
-
-          {/* ── Filter bar: row 2 — Language pair (only when list has mixed langs) ── */}
-          {!loadingDetails && hasMixedLangs && !bulkMode && (
-            <View style={styles.filterSectionRow2}>
-              <TouchableOpacity
-                style={[styles.filterDropBtn, langPairFilter !== null && styles.filterDropBtnActive]}
-                onPress={() => {
-                  setLangPairDropOpen((v) => !v);
-                  setCefrDropOpen(false);
-                  setStateDropOpen(false);
-                }}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.filterDropText, langPairFilter !== null && styles.filterDropTextActive]}>
-                  {langPairFilter ?? t('lists.filter_all_pairs')}
-                </Text>
-                <Ionicons
-                  name={langPairDropOpen ? 'chevron-up' : 'chevron-down'}
-                  size={12}
-                  color={langPairFilter !== null ? '#ffffff' : COLORS.textSecondary}
-                />
-              </TouchableOpacity>
-
-              {/* Reset lang pair filter */}
-              {langPairFilter !== null && (
-                <TouchableOpacity
-                  style={styles.filterResetBtn}
-                  onPress={() => {
-                    setLangPairFilter(null);
                     setLangPairDropOpen(false);
                   }}
                   activeOpacity={0.7}
@@ -1414,18 +1397,11 @@ const styles = StyleSheet.create({
   subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 4 },
   usageChip: { fontSize: 11, color: COLORS.textHint, backgroundColor: COLORS.borderLight, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999 },
 
-  // ── Filter bar (compact 1-row dropdowns) ──────────────────
+  // ── Filter bar — wraps automatically, no hardcoded rows ────
   filterSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 4,
-    flexWrap: 'nowrap',
-  },
-  // Row 2: language pair filter — shown only for mixed-language lists
-  filterSectionRow2: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 6,
     marginBottom: 8,
   },
