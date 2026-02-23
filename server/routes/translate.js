@@ -250,17 +250,23 @@ router.post('/translate', optionalAuth, async (req, res) => {
     }
 
     // Крок 1: Перевіряємо кеш (чи вже перекладали це слово)
-    const { data: cached, error: cacheError } = await supabase
+    // Використовуємо .limit(1) замість .maybeSingle() — одне слово може мати кілька
+    // рядків з різними перекладами (основний + альтернативи), .maybeSingle() падає на >1.
+    // Беремо найстаріший рядок — він і є основним перекладом.
+    const { data: cachedRows, error: cacheError } = await supabase
       .from('words')
       .select('*')
       .eq('original', cleanWord)
       .eq('source_lang', srcLang)
       .eq('target_lang', tgtLang)
-      .maybeSingle();
+      .order('created_at', { ascending: true })
+      .limit(1);
 
     if (cacheError) {
       console.warn('⚠️ Cache read error:', cacheError.message);
     }
+
+    const cached = cachedRows?.[0] ?? null;
 
     if (cached) {
       console.log(`📦 Кеш: "${cleanWord}" вже є в базі`);
