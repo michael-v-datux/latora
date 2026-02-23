@@ -575,8 +575,7 @@ export default function ListsScreen({ navigation }) {
             </View>
           )}
 
-          {/* ── Filter bar: compact 1-row dropdowns ── */}
-          {/* CEFR: all users. State/Due: Pro only. */}
+          {/* ── Filter bar: row 1 — CEFR / State / Due ── */}
           {!loadingDetails && words.length > 0 && !bulkMode && (
             <View style={styles.filterSection}>
               {/* CEFR dropdown */}
@@ -639,39 +638,54 @@ export default function ListsScreen({ navigation }) {
                 </TouchableOpacity>
               )}
 
-              {/* Language pair filter — only shown when list has mixed langs */}
-              {hasMixedLangs && (
-                <TouchableOpacity
-                  style={[styles.filterDropBtn, langPairFilter !== null && styles.filterDropBtnActive]}
-                  onPress={() => {
-                    setLangPairDropOpen((v) => !v);
-                    setCefrDropOpen(false);
-                    setStateDropOpen(false);
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.filterDropText, langPairFilter !== null && styles.filterDropTextActive]}>
-                    {langPairFilter ?? t('lists.filter_all_pairs')}
-                  </Text>
-                  <Ionicons
-                    name={langPairDropOpen ? 'chevron-up' : 'chevron-down'}
-                    size={12}
-                    color={langPairFilter !== null ? '#ffffff' : COLORS.textSecondary}
-                  />
-                </TouchableOpacity>
-              )}
-
-              {/* Reset — always visible when any filter active */}
-              {hasActiveFilter && (
+              {/* Reset — always visible when any filter active (excluding langPairFilter) */}
+              {(cefrFilter.length > 0 || stateFilter !== 'all' || dueOnly) && (
                 <TouchableOpacity
                   style={styles.filterResetBtn}
                   onPress={() => {
                     setCefrFilter([]);
                     setStateFilter('all');
                     setDueOnly(false);
-                    setLangPairFilter(null);
                     setCefrDropOpen(false);
                     setStateDropOpen(false);
+                  }}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                >
+                  <Ionicons name="close-circle" size={18} color="#dc2626" />
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {/* ── Filter bar: row 2 — Language pair (only when list has mixed langs) ── */}
+          {!loadingDetails && hasMixedLangs && !bulkMode && (
+            <View style={styles.filterSectionRow2}>
+              <TouchableOpacity
+                style={[styles.filterDropBtn, langPairFilter !== null && styles.filterDropBtnActive]}
+                onPress={() => {
+                  setLangPairDropOpen((v) => !v);
+                  setCefrDropOpen(false);
+                  setStateDropOpen(false);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.filterDropText, langPairFilter !== null && styles.filterDropTextActive]}>
+                  {langPairFilter ?? t('lists.filter_all_pairs')}
+                </Text>
+                <Ionicons
+                  name={langPairDropOpen ? 'chevron-up' : 'chevron-down'}
+                  size={12}
+                  color={langPairFilter !== null ? '#ffffff' : COLORS.textSecondary}
+                />
+              </TouchableOpacity>
+
+              {/* Reset lang pair filter */}
+              {langPairFilter !== null && (
+                <TouchableOpacity
+                  style={styles.filterResetBtn}
+                  onPress={() => {
+                    setLangPairFilter(null);
                     setLangPairDropOpen(false);
                   }}
                   activeOpacity={0.7}
@@ -1374,8 +1388,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 8,
+    marginBottom: 4,
     flexWrap: 'nowrap',
+  },
+  // Row 2: language pair filter — shown only for mixed-language lists
+  filterSectionRow2: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
   },
   filterDropBtn: {
     flexDirection: 'row',
