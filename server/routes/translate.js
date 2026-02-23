@@ -114,16 +114,26 @@ function looksLikeWord(input) {
   const s = normalize(input);
   if (s.length < 2 || s.length > 120) return false;
 
-  // Дозволяємо: літери + пробіли + апострофи + дефіси + термінальна пунктуація (?!.)
+  // П2: блокуємо URL-подібні патерни (word.com, test.js) — крапка між двома словами без пробілу
+  if (/\b[a-zA-Z0-9]+\.[a-zA-Z]{2,}\b/.test(s)) return false;
+
+  // Дозволяємо: літери + цифри + пробіли + апострофи + дефіси + слеш + термінальна пунктуація
+  // Цифри та / потрібні для виразів типу "24/7", "Catch-22", "9-to-5"
   // ?/!/. потрібні для коротких розмовних фраз ("Як справи?", "Good morning!")
-  const ok = /^[a-zA-Z\u0400-\u04FF\s''.\-?!]+$/.test(s);
+  const ok = /^[a-zA-Z\u0400-\u04FF0-9\s''.\-?!/]+$/.test(s);
   if (!ok) return false;
 
-  // Відсікаємо латиницю без голосних (типу xqzvprm) — пунктуацію ігноруємо при перевірці
-  const isLatin = /^[a-zA-Z\s''.\-?!]+$/.test(s);
+  // Відсікаємо латиницю без голосних (типу xqzvprm)
+  const isLatin = /^[a-zA-Z0-9\s''.\-?!/]+$/.test(s);
   if (isLatin) {
-    const hasVowel = /[aeiouy]/i.test(s);
-    if (!hasVowel) return false;
+    // П1: абревіатури ALL CAPS (2–6 букв) — не перевіряємо голосні
+    // FBI, GPS, SRS, PDF, COVID, NASA тощо
+    const stripped = s.replace(/[^a-zA-Z]/g, '');
+    const isAcronym = stripped.length >= 2 && stripped.length <= 6 && /^[A-Z]+$/.test(stripped);
+    if (!isAcronym) {
+      const hasVowel = /[aeiouy]/i.test(s);
+      if (!hasVowel) return false;
+    }
   }
 
   return true;
