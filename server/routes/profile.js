@@ -354,6 +354,7 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
 
     // --- A & B1: обчислюємо з list_words → words (вже є в lwData) ---
     const pairWordCount  = {};   // { "EN|UK": 120, "PL|DE": 30 }
+    const pairDirCount   = {};   // { "EN|UK": { "EN->UK": 3, "UK->EN": 1 } } — directional split
     const langInvolved   = {};   // { "EN": 150, "UK": 120, "PL": 30, "DE": 30 }
 
     for (const lw of lwData) {
@@ -364,14 +365,23 @@ router.get("/profile/me", requireAuth, async (req, res, next) => {
       const pairKey = normalizePair(src, tgt);
       pairWordCount[pairKey] = (pairWordCount[pairKey] || 0) + 1;
 
+      // Directional split: рахуємо окремо EN→UK і UK→EN всередині тієї ж пари
+      if (!pairDirCount[pairKey]) pairDirCount[pairKey] = {};
+      const dirKey = `${src}->${tgt}`;
+      pairDirCount[pairKey][dirKey] = (pairDirCount[pairKey][dirKey] || 0) + 1;
+
       langInvolved[src] = (langInvolved[src] || 0) + 1;
       langInvolved[tgt] = (langInvolved[tgt] || 0) + 1;
     }
 
-    // Level A: масив пар з кількістю слів
+    // Level A: масив пар з кількістю слів + directional breakdown
     const pairStats = Object.entries(pairWordCount).map(([pair, wordCount]) => {
       const [langA, langB] = pair.split('|');
-      return { pair, lang_a: langA, lang_b: langB, word_count: wordCount };
+      // Перетворюємо { "EN->UK": 3, "UK->EN": 1 } → [{ dir: "EN→UK", count: 3 }, ...]
+      const directions = Object.entries(pairDirCount[pair] || {})
+        .map(([dir, count]) => ({ dir: dir.replace('->', '→'), count }))
+        .sort((a, b) => b.count - a.count);
+      return { pair, lang_a: langA, lang_b: langB, word_count: wordCount, directions };
     }).sort((a, b) => b.word_count - a.word_count);
 
     // Level B1: масив мов з кількістю слів (де ця мова задіяна)

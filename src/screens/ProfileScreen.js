@@ -380,6 +380,52 @@ function EmptyTabState({ icon, title, subtitle, btnLabel, onBtnPress }) {
   );
 }
 
+/**
+ * InfoSectionHeader — заголовок секції з іконкою ⓘ
+ *
+ * Props:
+ *   label    — текст заголовка (замінює sectionLabel)
+ *   infoText — текст тултіпу (зрозумілою мовою, без техн. жаргону)
+ *   style    — зовнішній стиль wrapper-у (опційно)
+ *
+ * Тултіп автоматично зникає через 8 секунд.
+ * Повторний клік на ⓘ = закрити / відкрити.
+ */
+function InfoSectionHeader({ label, infoText, style }) {
+  const [visible, setVisible] = useState(false);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (visible) {
+      timerRef.current = setTimeout(() => setVisible(false), 8000);
+    }
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [visible]);
+
+  return (
+    <View style={[{ marginBottom: 14 }, style]}>
+      {/* Рядок: label + ⓘ */}
+      <View style={styles.infoHeaderRow}>
+        <Text style={[styles.sectionLabel, { marginBottom: 0 }]}>{label}</Text>
+        <TouchableOpacity onPress={() => setVisible(v => !v)} hitSlop={8} activeOpacity={0.7}>
+          <Ionicons
+            name={visible ? "information-circle" : "information-circle-outline"}
+            size={14}
+            color={visible ? COLORS.primary : COLORS.textHint}
+          />
+        </TouchableOpacity>
+      </View>
+      {/* Тултіп — рендериться нижче заголовка, повна ширина картки */}
+      {visible && (
+        <View style={styles.infoTooltipBox}>
+          <Text style={styles.infoTooltipText}>{infoText}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ─── Головний компонент ───────────────────────────────────────────────────────
 export default function ProfileScreen({ navigation }) {
   const { t }    = useI18n();
@@ -559,9 +605,6 @@ export default function ProfileScreen({ navigation }) {
               <Text style={styles.profileName} numberOfLines={1}>
                 {profile.fullName || t("profile.signed_in")}
               </Text>
-              <Text style={styles.profileEmail} numberOfLines={1}>
-                {profile.email || "—"}
-              </Text>
             </View>
             <TouchableOpacity
               style={styles.settingsGear}
@@ -719,8 +762,12 @@ export default function ProfileScreen({ navigation }) {
           <>
             {/* Vocab Growth chart */}
             <View style={styles.card}>
-              <View style={styles.growthHeaderRow}>
-                <Text style={styles.sectionLabel}>{t("profile.vocab_growth_section")}</Text>
+              <InfoSectionHeader
+                label={t("profile.vocab_growth_section")}
+                infoText={t("profile.info_vocab_growth")}
+                style={{ marginBottom: 4 }}
+              />
+              <View style={styles.growthToggleRow}>
                 <View style={styles.windowToggle}>
                   {[7, 30].map((w) => (
                     <TouchableOpacity
@@ -781,7 +828,10 @@ export default function ProfileScreen({ navigation }) {
             {/* Vocabulary Velocity */}
             {isPro ? (
               <View style={styles.card}>
-                <Text style={styles.sectionLabel}>{t("profile.pro_velocity_lock")}</Text>
+                <InfoSectionHeader
+                  label={t("profile.pro_velocity_lock")}
+                  infoText={t("profile.info_velocity")}
+                />
                 {loading ? (
                   <ActivityIndicator size="small" color={COLORS.textMuted} style={{ marginTop: 8 }} />
                 ) : (
@@ -808,7 +858,10 @@ export default function ProfileScreen({ navigation }) {
           <>
             {/* Review Activity stats */}
             <View style={styles.card}>
-              <Text style={styles.sectionLabel}>{t("profile.review_activity_section")}</Text>
+              <InfoSectionHeader
+                label={t("profile.review_activity_section")}
+                infoText={t("profile.info_review_activity")}
+              />
               {loading ? (
                 <ActivityIndicator size="small" color={COLORS.textMuted} style={{ marginTop: 8 }} />
               ) : reviewActivity.total_reviews === 0 ? (
@@ -866,8 +919,12 @@ export default function ProfileScreen({ navigation }) {
 
             {/* Mistake Heatmap */}
             <View style={styles.card}>
-              <View style={styles.growthHeaderRow}>
-                <Text style={styles.sectionLabel}>{t("profile.heatmap_section")}</Text>
+              <InfoSectionHeader
+                label={t("profile.heatmap_section")}
+                infoText={t("profile.info_heatmap")}
+                style={{ marginBottom: 4 }}
+              />
+              <View style={styles.growthToggleRow}>
                 <View style={styles.windowToggle}>
                   {[7, 30].map((w) => (
                     <TouchableOpacity
@@ -933,7 +990,10 @@ export default function ProfileScreen({ navigation }) {
             <>
               {/* Personal Difficulty Overview */}
               <View style={styles.card}>
-                <Text style={styles.sectionLabel}>{t("profile.difficulty_overview_section")}</Text>
+                <InfoSectionHeader
+                  label={t("profile.difficulty_overview_section")}
+                  infoText={t("profile.info_difficulty_overview")}
+                />
                 {loading ? (
                   <ActivityIndicator size="small" color={COLORS.textMuted} style={{ marginTop: 8 }} />
                 ) : !difficultyOverview ? (
@@ -1007,9 +1067,14 @@ export default function ProfileScreen({ navigation }) {
         {/* ── ALE Skill Profile (Difficulty tab, all users) ── */}
         {activeTab === "difficulty" && !loading && (
           <View style={styles.card}>
-            {/* Header row: title + active badge (Pro) or lock chip */}
-            <View style={styles.aleSectionHeader}>
-              <Text style={styles.sectionLabel}>{t("profile.ale_section")}</Text>
+            {/* Header: title + ⓘ — full width so tooltip expands properly */}
+            <InfoSectionHeader
+              label={t("profile.ale_section")}
+              infoText={t("profile.info_ale")}
+              style={{ marginBottom: 4 }}
+            />
+            {/* Badge row: Pro active / lock chip */}
+            <View style={styles.aleBadgeRow}>
               {isPro ? (
                 <View style={styles.aleActiveBadge}>
                   <Text style={styles.aleActiveBadgeText}>{t("profile.ale_active_badge")}</Text>
@@ -1085,10 +1150,23 @@ export default function ProfileScreen({ navigation }) {
                   <Text style={styles.sectionLabel}>{t("profile.lang_pairs_section")}</Text>
                   {pairWordCounts.map((pair) => (
                     <View key={pair.pair} style={styles.langPairRow}>
-                      <View style={styles.langPairBadge}>
-                        <Text style={styles.langPairBadgeText}>{pair.lang_a}</Text>
-                        <Text style={styles.langPairSep}>↔</Text>
-                        <Text style={styles.langPairBadgeText}>{pair.lang_b}</Text>
+                      {/* Left: badge + directional split */}
+                      <View style={{ flex: 1 }}>
+                        <View style={styles.langPairBadge}>
+                          <Text style={styles.langPairBadgeText}>{pair.lang_a}</Text>
+                          <Text style={styles.langPairSep}>↔</Text>
+                          <Text style={styles.langPairBadgeText}>{pair.lang_b}</Text>
+                        </View>
+                        {/* Show direction breakdown only when there are 2 directions */}
+                        {pair.directions && pair.directions.length > 1 && (
+                          <View style={styles.langDirRow}>
+                            {pair.directions.map((d) => (
+                              <Text key={d.dir} style={styles.langDirLabel}>
+                                {d.dir}: {d.count}
+                              </Text>
+                            ))}
+                          </View>
+                        )}
                       </View>
                       <View style={styles.langPairStats}>
                         <Text style={styles.langPairCount}>{pair.word_count}</Text>
@@ -1350,7 +1428,8 @@ const styles = StyleSheet.create({
   tabLabelActive:{ color: "#ffffff", fontWeight: "600" },
 
   // ── Vocab Growth ──
-  growthHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 0 },
+  growthHeaderRow:  { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 0 },
+  growthToggleRow:  { flexDirection: "row", justifyContent: "flex-end", marginBottom: 8 },
   windowToggle:    { flexDirection: "row", gap: 4 },
   windowBtn:       { paddingHorizontal: 10, paddingVertical: 4, borderRadius: BORDER_RADIUS.sm, borderWidth: 1, borderColor: COLORS.borderLight },
   windowBtnActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
@@ -1399,8 +1478,14 @@ const styles = StyleSheet.create({
   factorInfoBox:   { marginTop: 6, marginBottom: 4, backgroundColor: COLORS.background, borderRadius: BORDER_RADIUS.md, padding: 10, borderWidth: 1, borderColor: COLORS.borderLight },
   factorInfoText:  { fontSize: 12, color: COLORS.textSecondary, lineHeight: 17 },
 
+  // ── Info Section Header ──
+  infoHeaderRow:    { flexDirection: "row", alignItems: "center", gap: 5 },
+  infoTooltipBox:   { marginTop: 8, backgroundColor: COLORS.background, borderRadius: BORDER_RADIUS.md, padding: 12, borderWidth: 1, borderColor: COLORS.borderLight },
+  infoTooltipText:  { fontSize: 13, color: COLORS.textSecondary, lineHeight: 19 },
+
   // ── ALE Skill Profile ──
   aleSectionHeader:    { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 0 },
+  aleBadgeRow:         { flexDirection: "row", marginBottom: 8 },
   aleActiveBadge:      { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: "#dcfce7", borderWidth: 1, borderColor: "#86efac" },
   aleActiveBadgeText:  { fontSize: 10, fontWeight: "700", color: "#15803d", letterSpacing: 0.3 },
   aleProChip:          { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: "#fefce8", borderWidth: 1, borderColor: "#fde68a" },
@@ -1462,12 +1547,14 @@ const styles = StyleSheet.create({
 
   // ── Language tab ──
   langPairRow:         { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.borderLight },
-  langPairBadge:       { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "#eff6ff", borderRadius: BORDER_RADIUS.sm, paddingHorizontal: 10, paddingVertical: 5 },
+  langPairBadge:       { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "#eff6ff", borderRadius: BORDER_RADIUS.sm, paddingHorizontal: 10, paddingVertical: 5, alignSelf: "flex-start" },
   langPairBadgeText:   { fontSize: 13, fontWeight: "700", color: COLORS.primary, letterSpacing: 0.5 },
   langPairSep:         { fontSize: 12, color: COLORS.textMuted },
   langPairStats:       { alignItems: "flex-end" },
   langPairCount:       { fontSize: 18, fontWeight: "700", color: COLORS.primary },
   langPairCountLabel:  { fontSize: 10, color: COLORS.textMuted, marginTop: 1 },
+  langDirRow:          { flexDirection: "row", gap: 10, marginTop: 5 },
+  langDirLabel:        { fontSize: 11, color: COLORS.textMuted },
 
   langInvolvedRow:     { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 2 },
   langCode:            { fontSize: 12, fontWeight: "700", color: COLORS.primary, width: 28, letterSpacing: 0.5 },
