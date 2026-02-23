@@ -396,16 +396,16 @@ router.post('/translate', optionalAuth, async (req, res) => {
     const result = await translatePromise;
 
     // ── Increment AI counter (fire-and-forget, only for auth users, only on real AI hit) ─
+    // Uses supabaseAdmin (service role) because profiles RLS only allows SELECT + UPDATE
+    // and UPDATE requires the row to already exist — which it always does for auth users.
     if (req.user?.id && result._source === 'ai') {
-      const todayUTC   = new Date().toISOString().slice(0, 10);
-      const newCount   = (req.aiUsageToday ?? 0) + 1;
-      const userSupa   = req.supabase;
-      if (userSupa) {
-        userSupa
-          .from('profiles')
-          .upsert({ id: req.user.id, ai_requests_today: newCount, ai_reset_date: todayUTC }, { onConflict: 'id' })
-          .then(({ error: uErr }) => { if (uErr) console.warn('⚠️ AI counter upsert failed:', uErr.message); });
-      }
+      const todayUTC  = new Date().toISOString().slice(0, 10);
+      const newCount  = (req.aiUsageToday ?? 0) + 1;
+      supabaseAdmin
+        .from('profiles')
+        .update({ ai_requests_today: newCount, ai_reset_date: todayUTC })
+        .eq('id', req.user.id)
+        .then(({ error: uErr }) => { if (uErr) console.warn('⚠️ AI counter update failed:', uErr.message); });
     }
 
     return res.json(result);

@@ -111,15 +111,17 @@ router.post("/lists/:id/words", requireAuth, loadPlan, async (req, res, next) =>
     todayStart.setUTCHours(0, 0, 0, 0);
 
     // RLS on list_words ensures we only count current user's list_words
-    // by joining through lists (user_id check enforced by RLS)
+    // by joining through lists (user_id check enforced by RLS).
+    // Note: list_words has no 'id' column — use 'list_id' for the count query.
     const { count: savesToday, error: savesErr } = await supabase
       .from("list_words")
-      .select("id", { count: "exact", head: true })
+      .select("list_id", { count: "exact", head: true })
       .gte("added_at", todayStart.toISOString());
 
-    if (savesErr) throw savesErr;
-
-    if (savesToday >= ent.maxSavesPerDay) {
+    if (savesErr) {
+      // Non-fatal: if we can't count, skip the limit check (don't block the save)
+      console.warn("⚠️ [lists] savesToday count failed:", savesErr.message);
+    } else if (savesToday >= ent.maxSavesPerDay) {
       // resetAt = next UTC midnight (saves quota resets at 00:00 UTC)
       const nextMidnight = new Date();
       nextMidnight.setUTCHours(24, 0, 0, 0);
@@ -136,11 +138,14 @@ router.post("/lists/:id/words", requireAuth, loadPlan, async (req, res, next) =>
     // ── Check maxTotalWords ──────────────────────────────────────────────────
     const { count: totalWords, error: totalErr } = await supabase
       .from("list_words")
-      .select("id", { count: "exact", head: true });
+      .select("list_id", { count: "exact", head: true });
 
-    if (totalErr) throw totalErr;
+    if (totalErr) {
+      // Non-fatal: if we can't count, skip the limit check
+      console.warn("⚠️ [lists] totalWords count failed:", totalErr.message);
+    }
 
-    if (totalWords >= ent.maxTotalWords) {
+    if (!totalErr && totalWords >= ent.maxTotalWords) {
       return res.status(429).json({
         error: `Досягнуто ліміт слів (${ent.maxTotalWords} слів на ${req.plan} плані). Оновіться до Pro.`,
         errorCode: "WORDS_LIMIT_REACHED",
@@ -157,7 +162,13 @@ router.post("/lists/:id/words", requireAuth, loadPlan, async (req, res, next) =>
       .select('id, language_mix_policy')
       .eq('id', req.params.id)
       .single();
-    if (listError) throw listError;
+    if (listError) {
+      // PGRST116 = no row found → list not found or not accessible by this user
+      if (listError.code === 'PGRST116') {
+        return res.status(404).json({ error: 'Список не знайдено' });
+      }
+      throw listError;
+    }
 
     // 2) Fetch the word being added (language pair)
     const { data: word, error: wordError } = await supabase
@@ -165,7 +176,13 @@ router.post("/lists/:id/words", requireAuth, loadPlan, async (req, res, next) =>
       .select('id, source_lang, target_lang')
       .eq('id', wordId)
       .single();
-    if (wordError) throw wordError;
+    if (wordError) {
+      // PGRST116 = no row found → wordId is invalid or word not in DB
+      if (wordError.code === 'PGRST116') {
+        return res.status(404).json({ error: 'Слово не знайдено' });
+      }
+      throw wordError;
+    }
 
     const listPolicy = (list?.language_mix_policy || 'ASK').toUpperCase();
 
@@ -176,7 +193,10 @@ router.post("/lists/:id/words", requireAuth, loadPlan, async (req, res, next) =>
         .select('words(source_lang, target_lang)')
         .eq('list_id', req.params.id)
         .limit(30); // we only need a sample to detect pair; lists typically consistent
-      if (pairsError) throw pairsError;
+      if (pairsError) {
+        // Non-fatal: if we can't check pairs, skip the mismatch check and allow the save
+        console.warn('⚠️ [lists] pairsError fetching language pairs:', pairsError.message);
+      }
 
       const pairs = (existingPairs || [])
         .map((x) => x.words)
@@ -213,7 +233,13 @@ router.post("/lists/:id/words", requireAuth, loadPlan, async (req, res, next) =>
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      // 23505 = unique_violation: word already in this list
+      if (error.code === '23505') {
+        return res.status(409).json({ error: 'Це слово вже є у списку', errorCode: 'ALREADY_IN_LIST' });
+      }
+      throw error;
+    }
 
     return res.status(201).json(data);
   } catch (error) {
