@@ -1669,7 +1669,6 @@ const styles = StyleSheet.create({
   // ─── Today Queue ───────────────────────────────────────────
   // ── Today's Plan card ────────────────────────────────────────
   todayCard: {
-    marginHorizontal: SPACING.lg,
     marginBottom: SPACING.md,
     borderRadius: BORDER_RADIUS.lg,
     backgroundColor: COLORS.surface,
