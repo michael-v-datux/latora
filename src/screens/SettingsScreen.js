@@ -31,7 +31,6 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import * as Notifications from "expo-notifications";
 
 import { useAuth }  from "../hooks/useAuth";
 import { useI18n } from "../i18n";
@@ -60,7 +59,7 @@ try {
     "1.0.0";
 } catch {}
 
-// ─── Notification helpers ──────────────────────────────────────────────────────
+// ─── Notification helpers (lazy-loaded — expo-notifications needs native build) ─
 
 const PRACTICE_NOTIF_ID = "lexum_practice_reminder";
 const TODAY_NOTIF_ID    = "lexum_today_reminder";
@@ -69,34 +68,73 @@ const TODAY_NOTIF_ID    = "lexum_today_reminder";
 const DEFAULT_PRACTICE_HOUR = 19; // 7 PM
 const DEFAULT_TODAY_HOUR    = 20; // 8 PM
 
-async function requestNotifPermission() {
-  const { status: existing } = await Notifications.getPermissionsAsync();
-  if (existing === "granted") return true;
-  if (existing === "denied") return false; // must go to settings
+// Lazily require expo-notifications so the app doesn't crash in Expo Go
+// where ExpoPushTokenManager native module is unavailable.
+function getNotifications() {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require("expo-notifications");
+  } catch {
+    return null;
+  }
+}
 
-  const { status } = await Notifications.requestPermissionsAsync();
-  return status === "granted";
+// Returns 'granted' | 'denied' | 'unavailable'
+async function requestNotifPermission() {
+  const Notifications = getNotifications();
+  if (!Notifications) return "unavailable";
+  try {
+    const { status: existing } = await Notifications.getPermissionsAsync();
+    if (existing === "granted") return "granted";
+    if (existing === "denied")  return "denied";
+    const { status } = await Notifications.requestPermissionsAsync();
+    return status; // 'granted' | 'denied'
+  } catch {
+    return "unavailable";
+  }
+}
+
+// Returns current permission status without prompting
+async function getNotifPermissionStatus() {
+  const Notifications = getNotifications();
+  if (!Notifications) return "unavailable";
+  try {
+    const { status } = await Notifications.getPermissionsAsync();
+    return status; // 'granted' | 'denied' | 'undetermined'
+  } catch {
+    return "unavailable";
+  }
 }
 
 async function scheduleNotif(id, hour, titleKey, bodyKey, t) {
-  await Notifications.cancelScheduledNotificationAsync(id).catch(() => {});
-  await Notifications.scheduleNotificationAsync({
-    identifier: id,
-    content: {
-      title: t(titleKey),
-      body:  t(bodyKey),
-      sound: true,
-    },
-    trigger: {
-      hour,
-      minute: 0,
-      repeats: true,
-    },
-  });
+  const Notifications = getNotifications();
+  if (!Notifications) return;
+  try {
+    await Notifications.cancelScheduledNotificationAsync(id).catch(() => {});
+    await Notifications.scheduleNotificationAsync({
+      identifier: id,
+      content: {
+        title: t(titleKey),
+        body:  t(bodyKey),
+        sound: true,
+      },
+      trigger: {
+        hour,
+        minute: 0,
+        repeats: true,
+      },
+    });
+  } catch (e) {
+    console.warn("[Notifications] scheduleNotif failed:", e?.message);
+  }
 }
 
 async function cancelNotif(id) {
-  await Notifications.cancelScheduledNotificationAsync(id).catch(() => {});
+  const Notifications = getNotifications();
+  if (!Notifications) return;
+  try {
+    await Notifications.cancelScheduledNotificationAsync(id).catch(() => {});
+  } catch {}
 }
 
 // ─── Shared sub-components ────────────────────────────────────────────────────
@@ -526,22 +564,27 @@ export function NotificationsScreen({ navigation, route }) {
   const [todayOn, setTodayOn]                 = useState(passedSettings.reminder_today     ?? false);
   const [saving, setSaving]                   = useState(false);
 
-  // Check permission on mount
+  // Check permission on mount (safe — won't crash in Expo Go)
   useEffect(() => {
-    Notifications.getPermissionsAsync().then(({ status }) => setPermStatus(status));
+    getNotifPermissionStatus().then((status) => setPermStatus(status));
   }, []);
 
-  const isDenied = permStatus === "denied";
+  const isDenied       = permStatus === "denied";
+  const isUnavailable  = permStatus === "unavailable";
 
   // Toggle master switch
   const handleMasterToggle = useCallback(async (val) => {
     if (val && !isDenied) {
-      const granted = await requestNotifPermission();
-      if (!granted) {
+      const result = await requestNotifPermission();
+      if (result === "denied") {
         setPermStatus("denied");
         return;
       }
-      setPermStatus("granted");
+      if (result === "unavailable") {
+        // Native module not available (Expo Go) — allow toggling UI only, no real notifications
+      } else {
+        setPermStatus("granted");
+      }
     }
     setRemindersEnabled(val);
     if (!val) {
@@ -620,6 +663,16 @@ export function NotificationsScreen({ navigation, route }) {
             <Text style={styles.permBannerText}>{t("settings.notif_permission_denied")}</Text>
             <Text style={styles.permBannerCta}>{t("settings.notif_open_settings")}</Text>
           </TouchableOpacity>
+        )}
+
+        {/* Expo Go / dev build notice */}
+        {isUnavailable && (
+          <View style={[styles.permBanner, { borderColor: COLORS.borderLight, backgroundColor: COLORS.borderLight + "55" }]}>
+            <Ionicons name="information-circle-outline" size={18} color={COLORS.textMuted} />
+            <Text style={[styles.permBannerText, { color: COLORS.textMuted }]}>
+              {"Notifications require a development build (not available in Expo Go)"}
+            </Text>
+          </View>
         )}
 
         <View style={styles.card}>
