@@ -48,14 +48,21 @@ function validateInput(text, limits) {
   const trimmed = text.trim().replace(/\s+/g, ' ');
   if (!trimmed) return { ok: false, code: 'EMPTY' };
 
-  // Жорсткі евристики "схоже на речення"
-  if (/[.!?]/.test(trimmed))                           return { ok: false, code: 'SENTENCE_LIKE' };
+  // Структурні маркери речення — завжди блокуємо
   if (/\n/.test(text))                                 return { ok: false, code: 'SENTENCE_LIKE' };
   if (/;/.test(trimmed))                               return { ok: false, code: 'SENTENCE_LIKE' };
   if ((trimmed.match(/,/g) || []).length >= 2)         return { ok: false, code: 'SENTENCE_LIKE' };
 
-  // Кількість слів
+  // Кількість слів (обчислюємо до перевірки пунктуації)
   const words = trimmed.split(/\s+/).filter(Boolean);
+
+  // ?/!/. — блокуємо лише якщо фраза довга (> 5 слів).
+  // Короткі фрази з пунктуацією (привітання, повсякденні вирази) — дозволяємо.
+  // Наприклад: "Як справи?" (2 сл.) ✅   "I went to the store yesterday." (6 сл.) ❌
+  const CONVERSATIONAL_THRESHOLD = 5;
+  if (/[.!?]/.test(trimmed) && words.length > CONVERSATIONAL_THRESHOLD) {
+    return { ok: false, code: 'SENTENCE_LIKE' };
+  }
   if (words.length > limits.words) return { ok: false, code: 'TOO_LONG_WORDS', count: words.length };
 
   // Кількість символів
