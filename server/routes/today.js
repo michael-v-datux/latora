@@ -37,8 +37,9 @@ async function getUserPlan(supabase, userId) {
   return data?.subscription_plan || "free";
 }
 
-// ─── Core: generate today's plan items ──────────────────────────────────────
-// Returns array of { word_id, list_id, order_index } ready to insert into daily_plan_items
+// ─── Core: generate today's plan items (Smart scoring v1) ───────────────────
+// Quota: 40% weak (recent mistakes) · 40% due (overdue) · 20% new
+// Returns array of { word_id, list_id, order_index, slot_type }
 async function generatePlanItems(supabase, userId, targetCount) {
   // 1. Get all words the user has in their lists
   const { data: lists, error: listsErr } = await supabase
@@ -54,20 +55,21 @@ async function generatePlanItems(supabase, userId, targetCount) {
   // 2. Get all list_words with word data
   const { data: listWords, error: lwErr } = await supabase
     .from("list_words")
-    .select("list_id, word_id, words(id, difficulty_score, cefr_level)")
+    .select("list_id, word_id, words(id, difficulty_score, cefr_level, created_at)")
     .in("list_id", listIds);
 
   if (lwErr) throw lwErr;
 
   // Deduplicate words (same word can be in multiple lists — use first list)
-  const wordMap = new Map(); // word_id → { word_id, list_id, difficulty_score }
+  const wordMap = new Map(); // word_id → { word_id, list_id, difficulty_score, created_at }
   for (const lw of listWords || []) {
     if (!lw.words) continue;
     if (!wordMap.has(lw.word_id)) {
       wordMap.set(lw.word_id, {
-        word_id: lw.word_id,
-        list_id: lw.list_id,
+        word_id:          lw.word_id,
+        list_id:          lw.list_id,
         difficulty_score: lw.words.difficulty_score ?? 50,
+        created_at:       lw.words.created_at || null,
       });
     }
   }
@@ -75,58 +77,114 @@ async function generatePlanItems(supabase, userId, targetCount) {
   const allWordIds = [...wordMap.keys()];
   if (allWordIds.length === 0) return [];
 
-  // 3. Get progress for all words
-  const { data: progress, error: progErr } = await supabase
-    .from("user_word_progress")
-    .select("word_id, next_review, repetitions")
-    .in("word_id", allWordIds);
-
-  if (progErr) throw progErr;
+  // 3. Get progress and recent results for all words
+  const [{ data: progress }, { data: recentEvents }] = await Promise.all([
+    supabase
+      .from("user_word_progress")
+      .select("word_id, next_review, correct_count, wrong_count")
+      .in("word_id", allWordIds),
+    supabase
+      .from("practice_events")
+      .select("word_id, result, created_at")
+      .in("word_id", allWordIds)
+      .order("created_at", { ascending: false })
+      .limit(500),
+  ]);
 
   const progressMap = new Map((progress || []).map((p) => [p.word_id, p]));
-  const now = new Date();
 
-  // 4. Partition into due vs new
-  const dueWords = [];
-  const newWords = [];
+  // Build recent-mistake count per word (last 10 events)
+  const recentWrongMap = new Map(); // word_id → wrong count in last 10
+  const seenCount = new Map();
+  for (const e of recentEvents || []) {
+    const seen = seenCount.get(e.word_id) || 0;
+    if (seen >= 10) continue;
+    seenCount.set(e.word_id, seen + 1);
+    if (!e.result) {
+      recentWrongMap.set(e.word_id, (recentWrongMap.get(e.word_id) || 0) + 1);
+    }
+  }
+
+  const now = new Date();
+  const twoDaysMs = 2 * 24 * 60 * 60 * 1000;
+
+  // 4. Classify each word
+  const weakWords = [];  // had recent mistakes
+  const dueWords  = [];  // overdue (not weak)
+  const newWords  = [];  // no practice history yet
 
   for (const wordId of allWordIds) {
     const p = progressMap.get(wordId);
     const wordInfo = wordMap.get(wordId);
+    const recentWrong = recentWrongMap.get(wordId) || 0;
+    const isNew = !p;
+    const isDue = p && new Date(p.next_review) <= now;
+    const isRecent = wordInfo.created_at && (now - new Date(wordInfo.created_at)) < twoDaysMs;
 
-    if (!p) {
-      // No progress = new word
-      newWords.push(wordInfo);
-    } else if (new Date(p.next_review) <= now) {
-      // Has progress but due
+    if (!isNew && recentWrong >= 2) {
+      // Weak: ≥2 wrong answers in last 10 practice events
+      const weakScore = recentWrong * 2 - (p.correct_count || 0);
+      weakWords.push({ ...wordInfo, weakScore, slot_type: 'weak' });
+    } else if (isDue) {
+      // Due but not weak
       const overdueDays = (now - new Date(p.next_review)) / (1000 * 60 * 60 * 24);
-      dueWords.push({ ...wordInfo, overdueDays });
+      dueWords.push({ ...wordInfo, overdueDays, slot_type: 'due' });
+    } else if (isNew || isRecent) {
+      // New word (no history) or recently added
+      newWords.push({ ...wordInfo, slot_type: 'new' });
     }
-    // else: scheduled for future → skip (not due today)
   }
 
-  // 5. Sort: due by most overdue first, new by easiest first
-  dueWords.sort((a, b) => b.overdueDays - a.overdueDays);
-  newWords.sort((a, b) => a.difficulty_score - b.difficulty_score);
+  // 5. Sort each bucket
+  weakWords.sort((a, b) => b.weakScore - a.weakScore);          // highest weak score first
+  dueWords.sort((a, b) => b.overdueDays - a.overdueDays);       // most overdue first
+  newWords.sort((a, b) => a.difficulty_score - b.difficulty_score); // easiest first
 
-  // 6. Build the plan: fill up to targetCount
-  const selected = [];
+  // 6. Fill quota: 40% weak · 40% due · 20% new (with fallback fill)
   const needed = Math.min(targetCount, allWordIds.length);
+  const weakQuota = Math.round(needed * 0.4);
+  const newQuota  = Math.round(needed * 0.2);
+  const dueQuota  = needed - weakQuota - newQuota; // 40% remainder
 
-  for (const w of dueWords) {
-    if (selected.length >= needed) break;
-    selected.push(w);
-  }
-  for (const w of newWords) {
-    if (selected.length >= needed) break;
-    selected.push(w);
+  const selected = [];
+  const addFrom = (pool, quota) => {
+    for (const w of pool) {
+      if (selected.length >= needed) break;
+      if (selected.filter(s => s.slot_type === w.slot_type).length >= quota) break;
+      selected.push(w);
+    }
+  };
+
+  addFrom(weakWords, weakQuota);
+  addFrom(dueWords,  dueQuota);
+  addFrom(newWords,  newQuota);
+
+  // Fill any remaining slots from remaining words (any type)
+  if (selected.length < needed) {
+    const selectedIds = new Set(selected.map(w => w.word_id));
+    for (const pool of [dueWords, weakWords, newWords]) {
+      for (const w of pool) {
+        if (selected.length >= needed) break;
+        if (!selectedIds.has(w.word_id)) {
+          selected.push(w);
+          selectedIds.add(w.word_id);
+        }
+      }
+    }
   }
 
-  // 7. Map to plan items
-  return selected.map((w, i) => ({
+  // 7. Map to plan items — weak first, then due, then new
+  const ordered = [
+    ...selected.filter(w => w.slot_type === 'weak'),
+    ...selected.filter(w => w.slot_type === 'due'),
+    ...selected.filter(w => w.slot_type === 'new'),
+  ];
+
+  return ordered.map((w, i) => ({
     word_id:     w.word_id,
     list_id:     w.list_id,
     order_index: i,
+    slot_type:   w.slot_type,
   }));
 }
 
@@ -145,7 +203,7 @@ router.get("/today", requireAuth, async (req, res, next) => {
     // 1. Look for existing plan for today
     const { data: existing, error: fetchErr } = await supabase
       .from("daily_plans")
-      .select("*, daily_plan_items(*, words(*))")
+      .select("*, daily_plan_items(*, words(id, original, translation, transcription, cefr_level, part_of_speech, difficulty_score, source_lang, target_lang))")
       .eq("user_id", userId)
       .eq("date", today)
       .single();
@@ -186,7 +244,7 @@ router.get("/today", requireAuth, async (req, res, next) => {
     // 5. Fetch full plan with words
     const { data: fullPlan, error: fullErr } = await supabase
       .from("daily_plans")
-      .select("*, daily_plan_items(*, words(*))")
+      .select("*, daily_plan_items(*, words(id, original, translation, transcription, cefr_level, part_of_speech, difficulty_score, source_lang, target_lang))")
       .eq("id", newPlan.id)
       .single();
 
@@ -265,7 +323,7 @@ router.post("/today/regen", requireAuth, async (req, res, next) => {
     // Fetch full plan
     const { data: fullPlan, error: fullErr } = await supabase
       .from("daily_plans")
-      .select("*, daily_plan_items(*, words(*))")
+      .select("*, daily_plan_items(*, words(id, original, translation, transcription, cefr_level, part_of_speech, difficulty_score, source_lang, target_lang))")
       .eq("id", planId)
       .single();
 
@@ -351,6 +409,7 @@ function formatPlan(plan, ent) {
       word_id:      item.word_id,
       list_id:      item.list_id,
       order_index:  item.order_index,
+      slot_type:    item.slot_type || 'due', // 'weak' | 'due' | 'new'
       status:       item.status,
       completed_at: item.completed_at,
       word:         item.words || null,

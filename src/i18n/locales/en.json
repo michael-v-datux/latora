@@ -360,15 +360,21 @@
     }
   },
   "today": {
-    "title": "Today's Queue",
-    "progress": "{{done}} / {{total}} done",
+    "title": "TODAY'S PLAN",
+    "progress": "{{done}} of {{total}} done",
     "completed_all": "All done for today! 🎉",
     "empty": "No words scheduled yet",
     "mark_done": "Mark as done",
     "mark_pending": "Undo",
     "regen": "Refresh plan",
     "regen_pro_only": "Pro only",
-    "plan_size_label": "Words per day"
+    "plan_size_label": "Words per day",
+    "slot_weak": "weak",
+    "slot_due": "review",
+    "slot_new": "new",
+    "btn_start": "Start — {{count}} words",
+    "btn_continue": "Continue — {{left}} left",
+    "btn_review_again": "Review again"
   },
   "word_stats": {
     "title": "Word Stats",

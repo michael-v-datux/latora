@@ -160,9 +160,8 @@ export default function PracticeScreen({ route, navigation }) {
   const [forceRestart, setForceRestart] = useState(false); // для "Start over"
   const [sessionsToday, setSessionsToday] = useState(0); // кількість завершених сесій за сьогодні
 
-  // ─── Today Queue ───
-  const [todayPlan, setTodayPlan] = useState(null);     // { id, target_count, completed_count, items, can_regen, ... }
-  const [todayExpanded, setTodayExpanded] = useState(false); // show/hide word list
+  // ─── Today's Plan ───
+  const [todayPlan, setTodayPlan] = useState(null); // { id, target_count, completed_count, items, can_regen, ... }
 
   // ─── Info tooltip ───
   const [activeTooltip, setActiveTooltip] = useState(null); // 'due' | 'mastered' | 'total' | null
@@ -526,16 +525,32 @@ export default function PracticeScreen({ route, navigation }) {
       // Логуємо завершену сесію — додаємо в pendingSubmitsRef, щоб reset() міг дочекатись
       const finalStats = { ...stats, [quality]: stats[quality] + 1 };
       const correctCount = finalStats.easy + finalStats.good;
-      const sessionPromise = logPracticeSession(selectedList.id, words.length, correctCount).catch(e => {
-        console.warn('Failed to log practice session:', e);
-      });
-      pendingSubmitsRef.current.push(sessionPromise);
+
+      // For today plan sessions — don't log as a regular list session
+      const isTodaySession = selectedList?._isTodayPlan;
+      if (!isTodaySession) {
+        const sessionPromise = logPracticeSession(selectedList.id, words.length, correctCount).catch(e => {
+          console.warn('Failed to log practice session:', e);
+        });
+        pendingSubmitsRef.current.push(sessionPromise);
+      }
+
+      // Auto-mark all practiced words as completed in today's plan
+      if (isTodaySession) {
+        const markPromises = words.map(w =>
+          updateTodayItem(w.id, 'completed').catch(() => {})
+        );
+        markPromises.forEach(p => pendingSubmitsRef.current.push(p));
+      }
+
       // Pending session видаляється в reset() — після того як юзер натисне "Додому"
       setSessionsToday(prev => prev + 1);
       setScreen('results');
     } else {
-      // Оновлюємо лічильник відповідей в pending session
-      setPendingSession(selectedList.id, { wordsAnswered: answeredSoFar, total: words.length });
+      // Оновлюємо лічильник відповідей в pending session (тільки для звичайних списків)
+      if (!selectedList?._isTodayPlan) {
+        setPendingSession(selectedList.id, { wordsAnswered: answeredSoFar, total: words.length });
+      }
       const nextIndex = currentIndex + 1;
       setCurrentIndex(nextIndex);
       prepareWord(words[nextIndex], difficulty, allListWords, distractors);
@@ -571,6 +586,72 @@ export default function PracticeScreen({ route, navigation }) {
     setTimeLeft(prev => prev + 3);
   };
 
+  // ─── Start Today's Plan as a practice session ───
+  const startTodaySession = async (level) => {
+    if (!todayPlan?.items?.length) return;
+
+    // Only practice words not yet completed
+    const pending = todayPlan.items.filter(i => i.status !== 'completed' && i.word);
+    const allItems = todayPlan.items.filter(i => i.word);
+    const practiceItems = pending.length > 0 ? pending : allItems; // if all done, allow restart
+
+    if (practiceItems.length === 0) return;
+
+    setDifficulty(level);
+    setLoading(true);
+    try {
+      // Build word objects from plan item data
+      const planWords = practiceItems.map(item => ({
+        id:           item.word_id,
+        original:     item.word.original,
+        translation:  item.word.translation,
+        transcription: item.word.transcription || '',
+        cefr_level:   item.word.cefr_level,
+        part_of_speech: item.word.part_of_speech || '',
+        difficulty_score: item.word.difficulty_score,
+        source_lang:  item.word.source_lang,
+        target_lang:  item.word.target_lang,
+        slot_type:    item.slot_type, // 'weak' | 'due' | 'new'
+        _planItemId:  item.id,        // for marking complete after session
+        progress: null,
+      }));
+
+      // For quiz (level 2): need distractors from the same word pool
+      let distractorPool = planWords;
+      if (level === 2 && allItems.length > 3) {
+        distractorPool = allItems.map(i => ({ translation: i.word?.translation })).filter(w => w.translation);
+      }
+
+      // Sort: weak first, then due, then new
+      const slotOrder = { weak: 0, due: 1, new: 2 };
+      const sorted = [...planWords].sort((a, b) => (slotOrder[a.slot_type] ?? 1) - (slotOrder[b.slot_type] ?? 1));
+
+      setWords(sorted);
+      setAllListWords(sorted);
+      setDistractors(distractorPool);
+      setCurrentIndex(0);
+      setRevealed(false);
+      setStats({ easy: 0, good: 0, hard: 0, forgot: 0 });
+      setQuizAnswered(null);
+      setTimerExpired(false);
+      setTimeLeft(TIMER_SECONDS);
+      setSessionId(null);
+      answerStartRef.current = Date.now();
+
+      // Use a synthetic "list" object so the rest of the session flow works
+      setSelectedList({ id: `today_${todayPlan.id}`, name: t('today.title'), word_count: sorted.length, _isTodayPlan: true });
+      setForceRestart(false);
+      setSessionsToday(0);
+
+      prepareWord(sorted[0], level, sorted, distractorPool);
+      setLoading(false);
+      setScreen('session');
+    } catch (e) {
+      console.warn('Failed to start today session:', e);
+      setLoading(false);
+    }
+  };
+
   // ─── Mark today plan item complete / undo ───
   const handleTodayItemTap = async (item) => {
     const newStatus = item.status === 'completed' ? 'pending' : 'completed';
@@ -597,7 +678,8 @@ export default function PracticeScreen({ route, navigation }) {
   // ─── Reset ───
   const reset = async (completedListId = null) => {
     // Якщо сесію завершено — видаляємо pending запис для цього списку
-    if (completedListId) {
+    // (skip for today-plan sessions — they don't use AsyncStorage pending sessions)
+    if (completedListId && !selectedList?._isTodayPlan) {
       setPendingSession(completedListId, null);
     }
 
@@ -669,74 +751,78 @@ export default function PracticeScreen({ route, navigation }) {
             <Text style={styles.subtitle}>{t('practice.subtitle')}</Text>
           </View>
 
-          {/* Today Queue */}
-          {todayPlan && todayPlan.target_count > 0 && (
-            <View style={styles.todayCard}>
-              {/* Header row */}
-              <TouchableOpacity
-                style={styles.todayHeader}
-                onPress={() => setTodayExpanded(e => !e)}
-                activeOpacity={0.7}
-              >
-                <View style={styles.todayHeaderLeft}>
-                  <Text style={styles.todayTitle}>{t('today.title')}</Text>
-                  <Text style={styles.todaySubtitle}>
-                    {t('today.progress', {
-                      done: todayPlan.completed_count,
-                      total: todayPlan.target_count,
-                    })}
+          {/* ── Today's Plan Card ── */}
+          {todayPlan && todayPlan.target_count > 0 && (() => {
+            const total = todayPlan.target_count;
+            const done  = todayPlan.completed_count;
+            const pct   = Math.min(100, Math.round((done / total) * 100));
+            const allDone = done >= total;
+
+            // Slot type breakdown
+            const items = todayPlan.items || [];
+            const weakCount = items.filter(i => i.slot_type === 'weak').length;
+            const dueCount  = items.filter(i => i.slot_type === 'due').length;
+            const newCount  = items.filter(i => i.slot_type === 'new').length;
+
+            // Pending (not yet completed) — to decide button label
+            const pendingCount = items.filter(i => i.status !== 'completed' && i.word).length;
+
+            return (
+              <View style={styles.todayCard}>
+                {/* Top row: title + progress count */}
+                <View style={styles.todayHeader}>
+                  <View style={styles.todayHeaderLeft}>
+                    <Text style={styles.todayTitle}>{t('today.title')}</Text>
+                    {allDone ? (
+                      <Text style={[styles.todaySubtitle, { color: '#16a34a' }]}>{t('today.completed_all')}</Text>
+                    ) : (
+                      <Text style={styles.todaySubtitle}>{t('today.progress', { done, total })}</Text>
+                    )}
+                  </View>
+                  <Text style={styles.todayCount}>{done}/{total}</Text>
+                </View>
+
+                {/* Progress bar */}
+                <View style={styles.todayProgressBg}>
+                  <View style={[styles.todayProgressFill, { width: `${pct}%` }]} />
+                </View>
+
+                {/* Slot breakdown chips */}
+                <View style={styles.todaySlots}>
+                  {weakCount > 0 && (
+                    <View style={[styles.todaySlotChip, styles.todaySlotWeak]}>
+                      <Text style={styles.todaySlotText}>{weakCount} {t('today.slot_weak')}</Text>
+                    </View>
+                  )}
+                  {dueCount > 0 && (
+                    <View style={[styles.todaySlotChip, styles.todaySlotDue]}>
+                      <Text style={styles.todaySlotText}>{dueCount} {t('today.slot_due')}</Text>
+                    </View>
+                  )}
+                  {newCount > 0 && (
+                    <View style={[styles.todaySlotChip, styles.todaySlotNew]}>
+                      <Text style={styles.todaySlotText}>{newCount} {t('today.slot_new')}</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Start / Continue button */}
+                <TouchableOpacity
+                  style={[styles.todayStartBtn, allDone && styles.todayStartBtnDone]}
+                  onPress={() => startTodaySession(3)} // Classic mode by default
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.todayStartBtnText, allDone && styles.todayStartBtnTextDone]}>
+                    {allDone
+                      ? t('today.btn_review_again')
+                      : done > 0
+                        ? t('today.btn_continue', { left: pendingCount })
+                        : t('today.btn_start', { count: total })}
                   </Text>
-                </View>
-                <Text style={styles.todayChevron}>{todayExpanded ? '▲' : '▼'}</Text>
-              </TouchableOpacity>
-
-              {/* Progress bar */}
-              <View style={styles.todayProgressBg}>
-                <View
-                  style={[
-                    styles.todayProgressFill,
-                    {
-                      width: `${Math.min(
-                        100,
-                        Math.round((todayPlan.completed_count / todayPlan.target_count) * 100)
-                      )}%`,
-                    },
-                  ]}
-                />
+                </TouchableOpacity>
               </View>
-
-              {/* Expanded word list */}
-              {todayExpanded && (
-                <View style={styles.todayItems}>
-                  {todayPlan.items.map((item) => {
-                    const done = item.status === 'completed';
-                    return (
-                      <TouchableOpacity
-                        key={item.id}
-                        style={[styles.todayItem, done && styles.todayItemDone]}
-                        onPress={() => handleTodayItemTap(item)}
-                        activeOpacity={0.6}
-                      >
-                        <Text style={[styles.todayItemCheck, done && styles.todayItemCheckDone]}>
-                          {done ? '✓' : '○'}
-                        </Text>
-                        <View style={styles.todayItemText}>
-                          <Text style={[styles.todayItemWord, done && styles.todayItemWordDone]}>
-                            {item.word?.original || '—'}
-                          </Text>
-                          {item.word?.translation ? (
-                            <Text style={styles.todayItemTranslation}>
-                              {item.word.translation}
-                            </Text>
-                          ) : null}
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              )}
-            </View>
-          )}
+            );
+          })()}
 
           {/* Статистика */}
           <View style={styles.statsCard}>
@@ -1001,6 +1087,13 @@ export default function PracticeScreen({ route, navigation }) {
             </View>
           )}
           <Text style={styles.finishedTitle}>{t('practice.session_complete')}</Text>
+
+          {/* Today's plan badge — shown when finishing today session */}
+          {selectedList?._isTodayPlan && (
+            <View style={styles.todayDoneBadge}>
+              <Text style={styles.todayDoneBadgeText}>{t('today.completed_all')}</Text>
+            </View>
+          )}
 
           {/* Відсоток */}
           <Text style={styles.scoreText}>{correctPercent}%</Text>
@@ -1574,6 +1667,7 @@ const styles = StyleSheet.create({
   doneButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '600' },
 
   // ─── Today Queue ───────────────────────────────────────────
+  // ── Today's Plan card ────────────────────────────────────────
   todayCard: {
     marginHorizontal: SPACING.lg,
     marginBottom: SPACING.md,
@@ -1581,50 +1675,91 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface,
     borderWidth: 1,
     borderColor: COLORS.border,
+    padding: SPACING.md,
     overflow: 'hidden',
   },
   todayHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.md,
+    marginBottom: SPACING.sm,
   },
   todayHeaderLeft: { flex: 1 },
-  todayTitle: { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary, letterSpacing: 0.2 },
-  todaySubtitle: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
-  todayChevron: { fontSize: 11, color: COLORS.textHint, marginLeft: 8 },
+  todayTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  todaySubtitle: { fontSize: 13, color: COLORS.textSecondary },
+  todayCount: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.primary,
+    marginLeft: SPACING.sm,
+  },
   todayProgressBg: {
-    height: 4,
+    height: 6,
     backgroundColor: COLORS.borderLight,
-    marginHorizontal: SPACING.md,
-    marginBottom: SPACING.sm,
-    borderRadius: 2,
+    borderRadius: 3,
     overflow: 'hidden',
+    marginBottom: SPACING.sm,
   },
   todayProgressFill: {
     height: '100%',
     backgroundColor: COLORS.primary,
-    borderRadius: 2,
+    borderRadius: 3,
   },
-  todayItems: {
-    borderTopWidth: 1,
-    borderTopColor: COLORS.borderLight,
-    paddingVertical: 4,
-  },
-  todayItem: {
+  // Slot breakdown chips
+  todaySlots: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: SPACING.md,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.borderLight,
+    gap: 6,
+    flexWrap: 'wrap',
+    marginBottom: SPACING.md,
   },
-  todayItemDone: { opacity: 0.55 },
-  todayItemCheck: { fontSize: 16, color: COLORS.textHint, marginRight: 12, width: 20, textAlign: 'center' },
-  todayItemCheckDone: { color: '#16a34a' },
-  todayItemText: { flex: 1 },
-  todayItemWord: { fontSize: 15, fontWeight: '500', color: COLORS.textPrimary },
-  todayItemWordDone: { textDecorationLine: 'line-through', color: COLORS.textSecondary },
-  todayItemTranslation: { fontSize: 12, color: COLORS.textSecondary, marginTop: 1 },
+  todaySlotChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  todaySlotText: { fontSize: 11, fontWeight: '600' },
+  todaySlotWeak: { backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca' },   // red tint
+  todaySlotDue:  { backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa' },   // orange tint
+  todaySlotNew:  { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#bbf7d0' },   // green tint
+  // Start / Continue button
+  todayStartBtn: {
+    backgroundColor: COLORS.primary,
+    borderRadius: BORDER_RADIUS.md,
+    paddingVertical: 11,
+    alignItems: 'center',
+  },
+  todayStartBtnDone: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  todayStartBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  todayStartBtnTextDone: {
+    color: COLORS.textSecondary,
+  },
+  todayDoneBadge: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    borderRadius: BORDER_RADIUS.full,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 5,
+    marginBottom: SPACING.md,
+  },
+  todayDoneBadgeText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#16a34a',
+  },
 });

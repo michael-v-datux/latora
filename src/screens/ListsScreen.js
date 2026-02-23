@@ -126,6 +126,10 @@ export default function ListsScreen({ navigation }) {
   const [dueOnly, setDueOnly] = useState(false);
   const [isPro, setIsPro] = useState(false);
 
+  // Filter dropdown open state
+  const [cefrDropOpen, setCefrDropOpen] = useState(false);
+  const [stateDropOpen, setStateDropOpen] = useState(false);
+
   // Search (client-side, all users)
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -176,11 +180,13 @@ export default function ListsScreen({ navigation }) {
     setLifetimeSessions(null);
     setBulkMode(false);
     setSelectedWordIds(new Set());
-    // Reset filters and search when opening a new list
+    // Reset filters, dropdowns and search when opening a new list
     setCefrFilter([]);
     setStateFilter('all');
     setDueOnly(false);
     setSearchQuery('');
+    setCefrDropOpen(false);
+    setStateDropOpen(false);
     try {
       const [details, sessionData] = await Promise.all([
         fetchListDetails(list.id),
@@ -492,6 +498,8 @@ export default function ListsScreen({ navigation }) {
                 setSelectedWords([]);
                 setBulkMode(false);
                 setSelectedWordIds(new Set());
+                setCefrDropOpen(false);
+                setStateDropOpen(false);
               }}
             >
               <Text style={styles.backText}>← Back</Text>
@@ -535,91 +543,7 @@ export default function ListsScreen({ navigation }) {
             </View>
           </View>
 
-          {/* ── Filter bar ── */}
-          {/* CEFR: all users. State/Due: Pro only (with lock pill for Free). */}
-          {!loadingDetails && words.length > 0 && !bulkMode && (
-            <View style={styles.filterSection}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
-                {/* CEFR pills — available to everyone */}
-                {CEFR_LEVELS.map((lvl) => {
-                  const active = cefrFilter.includes(lvl);
-                  return (
-                    <TouchableOpacity
-                      key={lvl}
-                      style={[styles.filterPill, active && styles.filterPillActive]}
-                      onPress={() => {
-                        setCefrFilter((prev) =>
-                          prev.includes(lvl) ? prev.filter((l) => l !== lvl) : [...prev, lvl]
-                        );
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.filterPillText, active && styles.filterPillTextActive]}>
-                        {lvl}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-
-                <View style={styles.filterDivider} />
-
-                {/* State + Due filters — Pro only */}
-                {isPro ? (
-                  <>
-                    {['all', ...WORD_STATES].map((st) => {
-                      const active = stateFilter === st;
-                      const label = st === 'all' ? t('lists.filter_all_states') : t(`word.state_${st}`);
-                      return (
-                        <TouchableOpacity
-                          key={st}
-                          style={[styles.filterPill, active && styles.filterPillActive]}
-                          onPress={() => setStateFilter(st)}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={[styles.filterPillText, active && styles.filterPillTextActive]}>
-                            {label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                    <View style={styles.filterDivider} />
-                    <TouchableOpacity
-                      style={[styles.filterPill, dueOnly && styles.filterPillActive]}
-                      onPress={() => setDueOnly((v) => !v)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.filterPillText, dueOnly && styles.filterPillTextActive]}>
-                        {t('lists.filter_due_only')}
-                      </Text>
-                    </TouchableOpacity>
-                  </>
-                ) : (
-                  /* Free: locked pill for advanced filters */
-                  <TouchableOpacity
-                    style={styles.filterLockPill}
-                    onPress={() => navigation.navigate('Profile', { screen: 'ProScreen' })}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="lock-closed" size={11} color="#ca8a04" />
-                    <Text style={styles.filterLockPillText}>{t('lists.filter_advanced_lock')}</Text>
-                  </TouchableOpacity>
-                )}
-
-                {/* Clear button — shown when any filter is active */}
-                {hasActiveFilter && (
-                  <TouchableOpacity
-                    style={styles.filterClearBtn}
-                    onPress={() => { setCefrFilter([]); setStateFilter('all'); setDueOnly(false); }}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.filterClearText}>{t('lists.filter_clear')} ✕</Text>
-                  </TouchableOpacity>
-                )}
-              </ScrollView>
-            </View>
-          )}
-
-          {/* Search bar */}
+          {/* ── Search bar (all users, when >3 words) ── */}
           {!loadingDetails && words.length > 3 && !bulkMode && (
             <View style={styles.searchBarWrap}>
               <Ionicons name="search-outline" size={16} color={COLORS.textHint} style={styles.searchIcon} />
@@ -629,7 +553,6 @@ export default function ListsScreen({ navigation }) {
                 onChangeText={setSearchQuery}
                 placeholder={t('lists.search_placeholder')}
                 placeholderTextColor={COLORS.textHint}
-                clearButtonMode="while-editing"
                 returnKeyType="search"
               />
               {searchQuery.length > 0 && (
@@ -637,6 +560,140 @@ export default function ListsScreen({ navigation }) {
                   <Ionicons name="close-circle" size={16} color={COLORS.textHint} />
                 </TouchableOpacity>
               )}
+            </View>
+          )}
+
+          {/* ── Filter bar: compact 1-row dropdowns ── */}
+          {/* CEFR: all users. State/Due: Pro only. */}
+          {!loadingDetails && words.length > 0 && !bulkMode && (
+            <View style={styles.filterSection}>
+              {/* CEFR dropdown */}
+              <TouchableOpacity
+                style={[styles.filterDropBtn, cefrFilter.length > 0 && styles.filterDropBtnActive]}
+                onPress={() => setCefrDropOpen((v) => !v)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.filterDropText, cefrFilter.length > 0 && styles.filterDropTextActive]}>
+                  {cefrFilter.length === 0
+                    ? t('lists.filter_all_cefr')
+                    : cefrFilter.length === 1
+                      ? cefrFilter[0]
+                      : `${cefrFilter.length} levels`}
+                </Text>
+                <Ionicons
+                  name={cefrDropOpen ? 'chevron-up' : 'chevron-down'}
+                  size={12}
+                  color={cefrFilter.length > 0 ? '#ffffff' : COLORS.textSecondary}
+                />
+              </TouchableOpacity>
+
+              {/* State dropdown (Pro) or lock pill (Free) */}
+              {isPro ? (
+                <TouchableOpacity
+                  style={[styles.filterDropBtn, stateFilter !== 'all' && styles.filterDropBtnActive]}
+                  onPress={() => setStateDropOpen((v) => !v)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.filterDropText, stateFilter !== 'all' && styles.filterDropTextActive]}>
+                    {stateFilter === 'all' ? t('lists.filter_all_states') : t(`word.state_${stateFilter}`)}
+                  </Text>
+                  <Ionicons
+                    name={stateDropOpen ? 'chevron-up' : 'chevron-down'}
+                    size={12}
+                    color={stateFilter !== 'all' ? '#ffffff' : COLORS.textSecondary}
+                  />
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.filterLockPill}
+                  onPress={() => navigation.navigate('Profile', { screen: 'ProScreen' })}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="lock-closed" size={11} color="#ca8a04" />
+                  <Text style={styles.filterLockPillText}>{t('lists.filter_advanced_lock')}</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Due only toggle (Pro) */}
+              {isPro && (
+                <TouchableOpacity
+                  style={[styles.filterDropBtn, dueOnly && styles.filterDropBtnActive]}
+                  onPress={() => setDueOnly((v) => !v)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.filterDropText, dueOnly && styles.filterDropTextActive]}>
+                    {t('lists.filter_due_only')}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Reset — always visible when any filter active */}
+              {hasActiveFilter && (
+                <TouchableOpacity
+                  style={styles.filterResetBtn}
+                  onPress={() => {
+                    setCefrFilter([]);
+                    setStateFilter('all');
+                    setDueOnly(false);
+                    setCefrDropOpen(false);
+                    setStateDropOpen(false);
+                  }}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                >
+                  <Ionicons name="close-circle" size={18} color="#dc2626" />
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {/* CEFR dropdown panel */}
+          {cefrDropOpen && !bulkMode && (
+            <View style={styles.dropPanel}>
+              <View style={styles.dropPanelRow}>
+                {CEFR_LEVELS.map((lvl) => {
+                  const active = cefrFilter.includes(lvl);
+                  return (
+                    <TouchableOpacity
+                      key={lvl}
+                      style={[styles.dropChip, active && styles.dropChipActive]}
+                      onPress={() =>
+                        setCefrFilter((prev) =>
+                          prev.includes(lvl) ? prev.filter((l) => l !== lvl) : [...prev, lvl]
+                        )
+                      }
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.dropChipText, active && styles.dropChipTextActive]}>{lvl}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <TouchableOpacity style={styles.dropDoneBtn} onPress={() => setCefrDropOpen(false)} activeOpacity={0.7}>
+                <Text style={styles.dropDoneBtnText}>{t('common.done')}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* State dropdown panel (Pro only) */}
+          {stateDropOpen && isPro && !bulkMode && (
+            <View style={styles.dropPanel}>
+              <View style={styles.dropPanelRow}>
+                {['all', ...WORD_STATES].map((st) => {
+                  const active = stateFilter === st;
+                  const label = st === 'all' ? t('lists.filter_all_states') : t(`word.state_${st}`);
+                  return (
+                    <TouchableOpacity
+                      key={st}
+                      style={[styles.dropChip, active && styles.dropChipActive]}
+                      onPress={() => { setStateFilter(st); setStateDropOpen(false); }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.dropChipText, active && styles.dropChipTextActive]}>{label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
           )}
 
@@ -975,13 +1032,14 @@ export default function ListsScreen({ navigation }) {
             visible={!!statsModalWord}
             transparent
             animationType="slide"
+            statusBarTranslucent
             onRequestClose={() => { setStatsModalWord(null); setWordStats(null); }}
           >
             <Pressable
-              style={styles.modalOverlay}
+              style={styles.overlay}
               onPress={() => { setStatsModalWord(null); setWordStats(null); }}
             >
-              <Pressable style={[styles.modalContent, { maxHeight: '75%' }]} onPress={() => {}}>
+              <Pressable style={[styles.modal, { maxHeight: '80%' }]} onPress={() => {}}>
                 <View style={styles.modalHeader}>
                   <Text style={styles.modalTitle}>
                     {statsModalWord?.original || t('word_stats.title')}
@@ -1238,35 +1296,93 @@ const styles = StyleSheet.create({
   subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 4 },
   usageChip: { fontSize: 11, color: COLORS.textHint, backgroundColor: COLORS.borderLight, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999 },
 
-  // Filter bar
-  filterSection: { marginBottom: 8 },
-  filterRow: { flexDirection: 'row' },
-  filterPill: {
+  // ── Filter bar (compact 1-row dropdowns) ──────────────────
+  filterSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+    flexWrap: 'nowrap',
+  },
+  filterDropBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+  },
+  filterDropBtnActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  filterDropText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  filterDropTextActive: { color: '#ffffff' },
+  filterResetBtn: {
+    marginLeft: 'auto',
+    padding: 2,
+  },
+
+  // Dropdown panels (shown below filter bar)
+  dropPanel: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.sm,
+    marginBottom: 8,
+  },
+  dropPanelRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  dropChip: {
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: COLORS.border,
-    marginRight: 6,
-    backgroundColor: COLORS.surface,
+    backgroundColor: COLORS.background,
   },
-  filterPillActive: {
+  dropChipActive: {
     backgroundColor: COLORS.primary,
     borderColor: COLORS.primary,
   },
-  filterPillText: { fontSize: 11, fontWeight: '600', color: COLORS.textSecondary },
-  filterPillTextActive: { color: '#ffffff' },
-  filterDivider: { width: 1, backgroundColor: COLORS.borderLight, marginHorizontal: 4, marginVertical: 4 },
-  filterClearBtn: {
-    paddingHorizontal: 10,
+  dropChipText: { fontSize: 12, fontWeight: '600', color: COLORS.textSecondary },
+  dropChipTextActive: { color: '#ffffff' },
+  dropDoneBtn: {
+    alignSelf: 'flex-end',
+    marginTop: 8,
+    paddingHorizontal: 14,
     paddingVertical: 5,
     borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#fecaca',
-    backgroundColor: '#fef2f2',
-    marginRight: 6,
+    backgroundColor: COLORS.primary,
   },
-  filterClearText: { fontSize: 11, fontWeight: '600', color: '#dc2626' },
+  dropDoneBtnText: { fontSize: 12, fontWeight: '700', color: '#ffffff' },
+
+  // Lock pill for Free users in filter row
+  filterLockPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#fefce8',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  filterLockPillText: { fontSize: 12, color: '#ca8a04', fontWeight: '600' },
+
+  // Keep legacy styles (used elsewhere or as fallback)
   filterLockBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1281,21 +1397,6 @@ const styles = StyleSheet.create({
   },
   filterLockText: { fontSize: 11, color: '#92400e', fontWeight: '600' },
   filterLockCta: { fontSize: 11, color: '#ca8a04', fontWeight: '700' },
-
-  // Compact lock pill (inline in filter row, for Free users)
-  filterLockPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    backgroundColor: '#fefce8',
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#fde68a',
-    marginRight: 4,
-  },
-  filterLockPillText: { fontSize: 11, color: '#ca8a04', fontWeight: '600' },
 
   // List card
   listCard: {
@@ -1586,7 +1687,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: BORDER_RADIUS.md,
-    marginHorizontal: SPACING.lg,
     marginBottom: SPACING.sm,
     paddingHorizontal: SPACING.sm,
     paddingVertical: 7,
