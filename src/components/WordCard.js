@@ -361,10 +361,12 @@ export default function WordCard({ word, onAddToList, isAdded = false, onRevert 
         </View>
       )}
 
-      {/* ─── Definition ─── */}
-      {!!word.definition && (
+      {/* ─── Definition (P1: show in app UI language) ─── */}
+      {!!(locale === 'uk' ? (word.definition_uk || word.definition) : word.definition) && (
         <View style={styles.definitionBox}>
-          <Text style={styles.definitionText}>{word.definition}</Text>
+          <Text style={styles.definitionText}>
+            {locale === 'uk' ? (word.definition_uk || word.definition) : word.definition}
+          </Text>
         </View>
       )}
 
@@ -500,23 +502,30 @@ export default function WordCard({ word, onAddToList, isAdded = false, onRevert 
         </View>
       )}
 
-      {/* ─── Example ─── */}
-      {(word.example_sentence || word.example) && (
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{t('word.example')}</Text>
-          <Text style={styles.example}>
-            {"\""}
-            {highlightWord(word.example_sentence || word.example, word.original).map((part, i) =>
-              part.highlight ? (
-                <Text key={i} style={styles.exampleHighlight}>{part.text}</Text>
-              ) : (
-                part.text
-              )
-            )}
-            {"\""}
-          </Text>
-        </View>
-      )}
+      {/* ─── Example (P3: prefer target-language example) ─── */}
+      {(word.example_sentence_target || word.example_sentence || word.example) && (() => {
+        // Prefer target-language example (P3); fallback to source-language example
+        const usingTarget = !!word.example_sentence_target;
+        const exampleText = word.example_sentence_target || word.example_sentence || word.example;
+        // Highlight the translated word when showing target example, else highlight original
+        const highlightTerm = usingTarget ? (word.translation || word.original) : word.original;
+        return (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>{t('word.example')}</Text>
+            <Text style={styles.example}>
+              {"\""}
+              {highlightWord(exampleText, highlightTerm).map((part, i) =>
+                part.highlight ? (
+                  <Text key={i} style={styles.exampleHighlight}>{part.text}</Text>
+                ) : (
+                  part.text
+                )
+              )}
+              {"\""}
+            </Text>
+          </View>
+        );
+      })()}
 
       {/* ─── Add to list button ─── */}
       {isAdded ? (

@@ -65,7 +65,7 @@ function validateInput(text, limits) {
 }
 
 export default function TranslateScreen() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { user } = useAuth();
   const userId = user?.id ?? null;
 
@@ -674,8 +674,10 @@ const handleSwap = () => {
               </View>
             </View>
             <Text style={styles.historyCardTranslation}>{histWord.translation}</Text>
-            {!!histWord.definition && (
-              <Text style={styles.historyCardDefinition}>{histWord.definition}</Text>
+            {!!(locale === 'uk' ? (histWord.definition_uk || histWord.definition) : histWord.definition) && (
+              <Text style={styles.historyCardDefinition}>
+                {locale === 'uk' ? (histWord.definition_uk || histWord.definition) : histWord.definition}
+              </Text>
             )}
             {isHistAdded ? (
               <View style={styles.historyAddedRow}>

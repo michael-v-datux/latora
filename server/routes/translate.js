@@ -313,8 +313,9 @@ router.post('/translate', optionalAuth, async (req, res) => {
         difficulty_score: difficulty.difficulty_score,
         cefr_level:       difficulty.cefr_level,
         difficulty_factors: difficulty.factors,
-        example_sentence: difficulty.example_sentence,
-        part_of_speech:   difficulty.part_of_speech,
+        example_sentence:        difficulty.example_sentence,
+        example_sentence_target: difficulty.example_sentence_target,
+        part_of_speech:          difficulty.part_of_speech,
 
         // ── Difficulty Engine v2: нові поля ──────────────────────────
         base_score:       difficulty.base_score,
@@ -327,6 +328,7 @@ router.post('/translate', optionalAuth, async (req, res) => {
         // ─────────────────────────────────────────────────────────────
 
         definition:       difficulty.definition,
+        definition_uk:    difficulty.definition_uk,
 
         // Для ідіом: зберігаємо ідіоматичні варіанти + literal(DeepL)
         alt_translations: (idiom && idiom.is_idiom)
@@ -469,10 +471,12 @@ async function saveOneAlternative(primaryWord, alt, { sourceLang, targetLang }) 
       difficulty_score: difficulty.difficulty_score,
       cefr_level:       difficulty.cefr_level,
       difficulty_factors: difficulty.factors,
-      example_sentence: alt.example_sentence || difficulty.example_sentence,
-      part_of_speech:   alt.part_of_speech || difficulty.part_of_speech,
-      definition:       difficulty.definition,
-      base_score:       difficulty.base_score,
+      example_sentence:        alt.example_sentence        || difficulty.example_sentence,
+      example_sentence_target: alt.example_sentence_target || difficulty.example_sentence_target,
+      part_of_speech:          alt.part_of_speech          || difficulty.part_of_speech,
+      definition:              difficulty.definition,
+      definition_uk:           difficulty.definition_uk,
+      base_score:              difficulty.base_score,
       ai_adjustment:    difficulty.ai_adjustment,
       confidence_score: difficulty.confidence_score,
       frequency_band:   difficulty.frequency_band,

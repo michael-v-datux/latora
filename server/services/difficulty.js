@@ -198,11 +198,16 @@ function parseClaudeJson(rawText) {
  * @returns {{ adjustment: number, confidence: number, reason: string,
  *             cefr_level: string, part_of_speech: string,
  *             transcription: string, example_sentence: string,
- *             polysemy_level: number, definition: string }}
+ *             example_sentence_target: string,
+ *             polysemy_level: number, definition: string, definition_uk: string }}
  */
 async function getAiAdjustment({ word, translation, sourceLang, targetLang, baseScore }) {
   const srcLabel = sourceLang || 'EN';
   const tgtLabel = targetLang || 'UK';
+
+  // Чи потрібне визначення українською?
+  // Так — завжди (UI може бути UK навіть якщо вивчають польську)
+  const needsUkDef = true;
 
   const prompt = `You are an expert in language teaching for ${tgtLabel}-speaking students learning ${srcLabel}.
 
@@ -216,9 +221,11 @@ Respond ONLY with a valid JSON object:
   "cefr_level": "B2",
   "part_of_speech": "noun",
   "transcription": "/ˈwɜːrd/",
-  "example_sentence": "A natural sentence using the word in context.",
+  "example_sentence": "A natural example sentence in ${srcLabel} using the word.",
+  "example_sentence_target": "A natural example sentence in ${tgtLabel} using the translated word '${translation}'.",
   "polysemy_level": 3,
-  "definition": "A concise English-language definition of the meaning."
+  "definition": "A concise English-language definition of the meaning.",
+  "definition_uk": "Стисле визначення слова українською мовою."
 }
 
 Rules:
@@ -228,16 +235,18 @@ Rules:
 - cefr_level: A1 A2 B1 B2 C1 C2
 - polysemy_level: 1(mono-semantic)–5(highly polysemous)
 - transcription: IPA format, ${srcLabel} pronunciation
-- example_sentence: in ${srcLabel}, natural usage
+- example_sentence: in ${srcLabel} (source language), natural usage of "${word}"
+- example_sentence_target: in ${tgtLabel} (target language), natural usage of the translated word "${translation}". Must be a different sentence from example_sentence.
 - definition: a short, clear English definition of the word/phrase/idiom meaning.
   For single words: dictionary-style (e.g. "very silly; deserving to be laughed at").
-  For idioms/fixed expressions: explain figurative meaning (e.g. "used to describe something extremely funny").
-  For collocations/phrases: brief contextual description (e.g. "a set of reusable interface components").
-  Keep it under 120 characters. Do not include the word itself in the definition.`;
+  For idioms/fixed expressions: explain figurative meaning.
+  For collocations/phrases: brief contextual description.
+  Keep it under 120 characters. Do not include the word itself in the definition.
+- definition_uk: same as definition but in Ukrainian. Keep under 120 characters.`;
 
   const message = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 400,
+    max_tokens: 500,
     messages: [{ role: 'user', content: prompt }],
   });
 
@@ -276,10 +285,12 @@ function computeConfidence({ aiConfidence, aiCefr, baseScore }) {
  *   morph_complexity: number,
  *   phrase_flag: boolean,
  *   factors: object,
- *   example_sentence: string|null,
+ *   example_sentence: string|null,         // у source_lang (напр. EN)
+ *   example_sentence_target: string|null,  // у target_lang (напр. PL, DE …)
  *   part_of_speech: string|null,
  *   transcription: string|null,
- *   definition: string|null,
+ *   definition: string|null,               // англійською
+ *   definition_uk: string|null,            // українською
  * }}
  */
 async function assessDifficulty(word, translation, opts = {}) {
@@ -309,20 +320,22 @@ async function assessDifficulty(word, translation, opts = {}) {
   if (!anthropic) {
     // No AI — повертаємо детерміністичний результат
     return {
-      cefr_level:       scoreToCefr(baseScore),
-      difficulty_score: baseScore,
-      base_score:       baseScore,
-      ai_adjustment:    0,
-      confidence_score: 40,
-      frequency_band:   frequencyBand,
-      polysemy_level:   polysemyEstimate,
-      morph_complexity: morphComplexityVal,
-      phrase_flag:      phraseFlag,
-      factors:          { source: 'deterministic_only' },
-      example_sentence: null,
-      part_of_speech:   null,
-      transcription:    null,
-      definition:       null,
+      cefr_level:               scoreToCefr(baseScore),
+      difficulty_score:         baseScore,
+      base_score:               baseScore,
+      ai_adjustment:            0,
+      confidence_score:         40,
+      frequency_band:           frequencyBand,
+      polysemy_level:           polysemyEstimate,
+      morph_complexity:         morphComplexityVal,
+      phrase_flag:              phraseFlag,
+      factors:                  { source: 'deterministic_only' },
+      example_sentence:         null,
+      example_sentence_target:  null,
+      part_of_speech:           null,
+      transcription:            null,
+      definition:               null,
+      definition_uk:            null,
     };
   }
 
@@ -352,15 +365,15 @@ async function assessDifficulty(word, translation, opts = {}) {
     });
 
     return {
-      cefr_level:       ai.cefr_level || scoreToCefr(finalScore),
-      difficulty_score: finalScore,
-      base_score:       refinedBase,
-      ai_adjustment:    adjustment,
-      confidence_score: confidenceScore,
-      frequency_band:   frequencyBand,
-      polysemy_level:   polysemyFinal,
-      morph_complexity: morphComplexityVal,
-      phrase_flag:      phraseFlag,
+      cefr_level:               ai.cefr_level || scoreToCefr(finalScore),
+      difficulty_score:         finalScore,
+      base_score:               refinedBase,
+      ai_adjustment:            adjustment,
+      confidence_score:         confidenceScore,
+      frequency_band:           frequencyBand,
+      polysemy_level:           polysemyFinal,
+      morph_complexity:         morphComplexityVal,
+      phrase_flag:              phraseFlag,
       factors: {
         polysemy:               polysemyFinal,
         false_friends:          ai.false_friends ?? false,
@@ -370,28 +383,32 @@ async function assessDifficulty(word, translation, opts = {}) {
         source: 'v2_ai+deterministic',
         ai_reason: ai.reason || null,
       },
-      example_sentence: ai.example_sentence || null,
-      part_of_speech:   ai.part_of_speech   || null,
-      transcription:    ai.transcription     || null,
-      definition:       ai.definition        || null,
+      example_sentence:         ai.example_sentence         || null,
+      example_sentence_target:  ai.example_sentence_target  || null,
+      part_of_speech:           ai.part_of_speech            || null,
+      transcription:            ai.transcription             || null,
+      definition:               ai.definition                || null,
+      definition_uk:            ai.definition_uk             || null,
     };
   } catch (error) {
     console.error('🤖 AI adjustment failed, using deterministic result:', error.message);
     return {
-      cefr_level:       scoreToCefr(baseScore),
-      difficulty_score: baseScore,
-      base_score:       baseScore,
-      ai_adjustment:    0,
-      confidence_score: 35,
-      frequency_band:   frequencyBand,
-      polysemy_level:   polysemyEstimate,
-      morph_complexity: morphComplexityVal,
-      phrase_flag:      phraseFlag,
-      factors:          { source: 'deterministic_fallback', error: error.message },
-      example_sentence: null,
-      part_of_speech:   null,
-      transcription:    null,
-      definition:       null,
+      cefr_level:               scoreToCefr(baseScore),
+      difficulty_score:         baseScore,
+      base_score:               baseScore,
+      ai_adjustment:            0,
+      confidence_score:         35,
+      frequency_band:           frequencyBand,
+      polysemy_level:           polysemyEstimate,
+      morph_complexity:         morphComplexityVal,
+      phrase_flag:              phraseFlag,
+      factors:                  { source: 'deterministic_fallback', error: error.message },
+      example_sentence:         null,
+      example_sentence_target:  null,
+      part_of_speech:           null,
+      transcription:            null,
+      definition:               null,
+      definition_uk:            null,
     };
   }
 }
