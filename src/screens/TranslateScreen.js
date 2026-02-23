@@ -719,15 +719,15 @@ const handleSwap = () => {
       style={styles.input}
       value={query}
       onChangeText={setQuery}
-      placeholder={t('translate.placeholder', { max: limits.words })}
+      placeholder={t('translate.placeholder')}
       placeholderTextColor={COLORS.textHint}
       returnKeyType="search"
       onSubmitEditing={canTranslate ? handleTranslate : undefined}
-      autoCorrect={false}
+      autoCorrect={false}   // no silent auto-replacement — user decides via tap
+      spellCheck={true}     // OS underlines typos natively (like Notes / Messages)
       autoCapitalize="none"
       multiline={true}
-      numberOfLines={3}
-      scrollEnabled={true}
+      scrollEnabled={false}
       textAlignVertical="top"
       blurOnSubmit={true}
     />
@@ -1047,13 +1047,12 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     marginTop: SPACING.sm,
-    minHeight: 48,
-    maxHeight: 90,
     fontSize: 18,
+    lineHeight: 26,
     color: COLORS.primary,
     fontWeight: '400',
     letterSpacing: -0.3,
-    paddingVertical: 10,
+    paddingVertical: 6,
     textAlignVertical: 'top',
   },
   inputCounterRow: {
@@ -1207,16 +1206,18 @@ swapBtn: {
 },
 inputWrap: {
   flexDirection: 'row',
-  alignItems: 'center',
+  alignItems: 'flex-start',
   borderWidth: 1,
   borderColor: COLORS.border,
   borderRadius: BORDER_RADIUS.md,
   backgroundColor: COLORS.surface,
   paddingHorizontal: SPACING.md,
-  minHeight: 48,
+  paddingVertical: 4,
+  minHeight: 44,
 },
 clearBtn: {
   marginLeft: 8,
+  marginTop: 10,
 },
 primaryBtn: {
   marginTop: SPACING.md,
