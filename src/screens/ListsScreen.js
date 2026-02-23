@@ -420,6 +420,31 @@ export default function ListsScreen({ navigation }) {
     return words;
   }, [selectedWords, searchQuery, cefrFilter, langPairFilter, isPro, stateFilter, dueOnly]);
 
+  // Available filter values — computed from ALL words in the list (unfiltered),
+  // so the dropdowns only show options that actually exist in this list.
+  const availableFilters = useMemo(() => {
+    const allWords = selectedWords || [];
+    const cefrLevels = CEFR_LEVELS.filter((lvl) => allWords.some((w) => w.cefr_level === lvl));
+    const states = WORD_STATES.filter((st) => allWords.some((w) => w.word_state === st));
+    const hasDue = allWords.some((w) => w.is_due);
+    return { cefrLevels, states, hasDue };
+  }, [selectedWords]);
+
+  // Auto-reset filters that are no longer valid for the current list content
+  // (e.g. user deleted the last word with state 'learning' while filter was active)
+  useEffect(() => {
+    if (cefrFilter.length > 0) {
+      const stillValid = cefrFilter.filter((lvl) => availableFilters.cefrLevels.includes(lvl));
+      if (stillValid.length !== cefrFilter.length) setCefrFilter(stillValid);
+    }
+    if (stateFilter !== 'all' && !availableFilters.states.includes(stateFilter)) {
+      setStateFilter('all');
+    }
+    if (dueOnly && !availableFilters.hasDue) {
+      setDueOnly(false);
+    }
+  }, [availableFilters]);
+
   const handleBulkDelete = () => {
     if (selectedCount === 0 || !selectedList) return;
     Alert.alert(
@@ -576,57 +601,63 @@ export default function ListsScreen({ navigation }) {
           )}
 
           {/* ── Filter bar: row 1 — CEFR / State / Due ── */}
+          {/* Each control is hidden when there's nothing to filter by */}
           {!loadingDetails && words.length > 0 && !bulkMode && (
             <View style={styles.filterSection}>
-              {/* CEFR dropdown */}
-              <TouchableOpacity
-                style={[styles.filterDropBtn, cefrFilter.length > 0 && styles.filterDropBtnActive]}
-                onPress={() => setCefrDropOpen((v) => !v)}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.filterDropText, cefrFilter.length > 0 && styles.filterDropTextActive]}>
-                  {cefrFilter.length === 0
-                    ? t('lists.filter_all_cefr')
-                    : cefrFilter.length === 1
-                      ? cefrFilter[0]
-                      : `${cefrFilter.length} levels`}
-                </Text>
-                <Ionicons
-                  name={cefrDropOpen ? 'chevron-up' : 'chevron-down'}
-                  size={12}
-                  color={cefrFilter.length > 0 ? '#ffffff' : COLORS.textSecondary}
-                />
-              </TouchableOpacity>
-
-              {/* State dropdown (Pro) or lock pill (Free) */}
-              {isPro ? (
+              {/* CEFR dropdown — only if list has 2+ distinct CEFR levels */}
+              {availableFilters.cefrLevels.length > 1 && (
                 <TouchableOpacity
-                  style={[styles.filterDropBtn, stateFilter !== 'all' && styles.filterDropBtnActive]}
-                  onPress={() => setStateDropOpen((v) => !v)}
+                  style={[styles.filterDropBtn, cefrFilter.length > 0 && styles.filterDropBtnActive]}
+                  onPress={() => setCefrDropOpen((v) => !v)}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.filterDropText, stateFilter !== 'all' && styles.filterDropTextActive]}>
-                    {stateFilter === 'all' ? t('lists.filter_all_states') : t(`word.state_${stateFilter}`)}
+                  <Text style={[styles.filterDropText, cefrFilter.length > 0 && styles.filterDropTextActive]}>
+                    {cefrFilter.length === 0
+                      ? t('lists.filter_all_cefr')
+                      : cefrFilter.length === 1
+                        ? cefrFilter[0]
+                        : `${cefrFilter.length} levels`}
                   </Text>
                   <Ionicons
-                    name={stateDropOpen ? 'chevron-up' : 'chevron-down'}
+                    name={cefrDropOpen ? 'chevron-up' : 'chevron-down'}
                     size={12}
-                    color={stateFilter !== 'all' ? '#ffffff' : COLORS.textSecondary}
+                    color={cefrFilter.length > 0 ? '#ffffff' : COLORS.textSecondary}
                   />
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={styles.filterLockPill}
-                  onPress={() => navigation.navigate('Profile', { screen: 'ProScreen' })}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="lock-closed" size={11} color="#ca8a04" />
-                  <Text style={styles.filterLockPillText}>{t('lists.filter_advanced_lock')}</Text>
                 </TouchableOpacity>
               )}
 
-              {/* Due only toggle (Pro) */}
-              {isPro && (
+              {/* State dropdown (Pro) — only if list has 2+ distinct states */}
+              {/* Lock pill for Free — only if list has 2+ states (same condition) */}
+              {availableFilters.states.length > 1 && (
+                isPro ? (
+                  <TouchableOpacity
+                    style={[styles.filterDropBtn, stateFilter !== 'all' && styles.filterDropBtnActive]}
+                    onPress={() => setStateDropOpen((v) => !v)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.filterDropText, stateFilter !== 'all' && styles.filterDropTextActive]}>
+                      {stateFilter === 'all' ? t('lists.filter_all_states') : t(`word.state_${stateFilter}`)}
+                    </Text>
+                    <Ionicons
+                      name={stateDropOpen ? 'chevron-up' : 'chevron-down'}
+                      size={12}
+                      color={stateFilter !== 'all' ? '#ffffff' : COLORS.textSecondary}
+                    />
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.filterLockPill}
+                    onPress={() => navigation.navigate('Profile', { screen: 'ProScreen' })}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="lock-closed" size={11} color="#ca8a04" />
+                    <Text style={styles.filterLockPillText}>{t('lists.filter_advanced_lock')}</Text>
+                  </TouchableOpacity>
+                )
+              )}
+
+              {/* Due only toggle (Pro) — only if list actually has due words */}
+              {isPro && availableFilters.hasDue && (
                 <TouchableOpacity
                   style={[styles.filterDropBtn, dueOnly && styles.filterDropBtnActive]}
                   onPress={() => setDueOnly((v) => !v)}
@@ -638,7 +669,7 @@ export default function ListsScreen({ navigation }) {
                 </TouchableOpacity>
               )}
 
-              {/* Reset — always visible when any filter active (excluding langPairFilter) */}
+              {/* Reset — only when a filter is active */}
               {(cefrFilter.length > 0 || stateFilter !== 'all' || dueOnly) && (
                 <TouchableOpacity
                   style={styles.filterResetBtn}
@@ -697,11 +728,11 @@ export default function ListsScreen({ navigation }) {
             </View>
           )}
 
-          {/* CEFR dropdown panel */}
+          {/* CEFR dropdown panel — only levels present in this list */}
           {cefrDropOpen && !bulkMode && (
             <View style={styles.dropPanel}>
               <View style={styles.dropPanelRow}>
-                {CEFR_LEVELS.map((lvl) => {
+                {availableFilters.cefrLevels.map((lvl) => {
                   const active = cefrFilter.includes(lvl);
                   return (
                     <TouchableOpacity
@@ -725,11 +756,11 @@ export default function ListsScreen({ navigation }) {
             </View>
           )}
 
-          {/* State dropdown panel (Pro only) */}
+          {/* State dropdown panel (Pro only) — only states present in this list */}
           {stateDropOpen && isPro && !bulkMode && (
             <View style={styles.dropPanel}>
               <View style={styles.dropPanelRow}>
-                {['all', ...WORD_STATES].map((st) => {
+                {['all', ...availableFilters.states].map((st) => {
                   const active = stateFilter === st;
                   const label = st === 'all' ? t('lists.filter_all_states') : t(`word.state_${st}`);
                   return (
