@@ -1375,47 +1375,45 @@ export default function ListsScreen({ navigation }) {
                 >
                   <Text style={styles.newListText}>+ {t('lists.new_list_btn')}</Text>
                 </TouchableOpacity>
-
-                {/* ── Recommendations entry block ─────────────────────────── */}
-                <View style={styles.recEntryBlock}>
-                  <View style={styles.recEntryHeader}>
-                    <Ionicons name="sparkles-outline" size={16} color={COLORS.accent} />
-                    <Text style={styles.recEntryTitle}>{t('rec.entry_title')}</Text>
-                    {recQuota && recActivationMet && (
-                      <Text style={styles.recEntryQuota}>
-                        {recQuota.left > 0
-                          ? t('rec.entry_quota', { left: recQuota.left, max: recQuota.max })
-                          : t('rec.entry_quota_empty')}
-                      </Text>
-                    )}
-                  </View>
-                  <Text style={styles.recEntrySubtitle}>{t('rec.entry_subtitle')}</Text>
-
-                  {!recActivationMet ? (
-                    /* Activation progress */
-                    <View style={styles.recActivationRow}>
-                      <Text style={styles.recActivationHint}>{t('rec.entry_activation_hint')}</Text>
-                    </View>
-                  ) : (
-                    /* CTA button */
-                    <TouchableOpacity
-                      style={[
-                        styles.recEntryBtn,
-                        recQuota?.left === 0 && styles.recEntryBtnDisabled,
-                      ]}
-                      onPress={() => setRecSetupVisible(true)}
-                      activeOpacity={0.8}
-                      disabled={recQuota?.left === 0}
-                    >
-                      <Ionicons name="sparkles" size={14} color="#fff" />
-                      <Text style={styles.recEntryBtnText}>{t('rec.entry_btn')}</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
               </>
             )}
           </>
         )}
+
+        {/* ── Recommendations entry block — always at bottom of scroll ── */}
+        <View style={styles.recEntryBlock}>
+          <View style={styles.recEntryHeader}>
+            <Ionicons name="sparkles-outline" size={16} color={COLORS.accent} />
+            <Text style={styles.recEntryTitle}>{t('rec.entry_title')}</Text>
+            {recQuota && recActivationMet && (
+              <Text style={styles.recEntryQuota}>
+                {recQuota.left > 0
+                  ? t('rec.entry_quota', { left: recQuota.left, max: recQuota.max })
+                  : t('rec.entry_quota_empty')}
+              </Text>
+            )}
+          </View>
+          <Text style={styles.recEntrySubtitle}>{t('rec.entry_subtitle')}</Text>
+
+          {!recActivationMet ? (
+            <View style={styles.recActivationRow}>
+              <Text style={styles.recActivationHint}>{t('rec.entry_activation_hint')}</Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={[
+                styles.recEntryBtn,
+                recQuota?.left === 0 && styles.recEntryBtnDisabled,
+              ]}
+              onPress={() => setRecSetupVisible(true)}
+              activeOpacity={0.8}
+              disabled={recQuota?.left === 0}
+            >
+              <Ionicons name="sparkles" size={14} color="#fff" />
+              <Text style={styles.recEntryBtnText}>{t('rec.entry_btn')}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         <View style={{ height: 40 }} />
 

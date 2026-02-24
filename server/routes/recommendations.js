@@ -664,6 +664,8 @@ router.post('/recommendations/generate', requireAuth, loadPlan, async (req, res,
         user_id:                 req.user.id,
         word_id:                 item.word_id || null,
         rec_word_id:             item.rec_word_id || null,
+        source_lang:             src,   // denormalized — avoids run join in action endpoint
+        target_lang:             tgt,
         original:                item.original,
         translation:             item.translation,
         transcription:           item.transcription || null,
@@ -745,10 +747,10 @@ router.post('/recommendations/action', requireAuth, async (req, res, next) => {
       return res.status(400).json({ error: 'action must be added|hidden|skipped' });
     }
 
-    // Fetch the recommendation item (verify ownership + get word refs)
+    // Fetch the recommendation item (verify ownership + get word refs + denormalized langs)
     const { data: item, error: fetchErr } = await supabaseAdmin
       .from('recommendation_items')
-      .select('id, run_id, user_id, word_id, rec_word_id, original, translation, transcription, cefr_level, part_of_speech, phrase_flag, example_sentence_target, definition, definition_uk')
+      .select('id, user_id, word_id, rec_word_id, source_lang, target_lang, original, translation, transcription, cefr_level, part_of_speech, phrase_flag, example_sentence_target, definition, definition_uk')
       .eq('id', itemId)
       .eq('user_id', req.user.id) // ownership check
       .single();
@@ -771,17 +773,9 @@ router.post('/recommendations/action', requireAuth, async (req, res, next) => {
         .single();
 
       if (recWord && !recWordErr) {
-        // Determine source/target lang from the recommendation run
-        const { data: run } = item.run_id
-          ? await supabaseAdmin
-              .from('recommendation_runs')
-              .select('source_lang, target_lang')
-              .eq('id', item.run_id)
-              .single()
-          : { data: null };
-
-        const srcLang = run?.source_lang || recWord.source_lang;
-        const tgtLang = run?.target_lang || recWord.target_lang;
+        // source/target lang is denormalized onto the item — no run join needed
+        const srcLang = item.source_lang || recWord.source_lang;
+        const tgtLang = item.target_lang || recWord.target_lang;
 
         // Insert into `words` table — ignore conflict if an existing row (e.g. source='translated') already has this word.
         // ignoreDuplicates: true prevents overwriting a high-quality 'translated' row with 'promoted' data.

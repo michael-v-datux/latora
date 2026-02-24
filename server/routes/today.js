@@ -288,15 +288,16 @@ router.get("/today", requireAuth, async (req, res, next) => {
     // 3. No plan yet — generate one
     const items = await generatePlanItems(supabase, userId, targetCount, skillProfile);
 
-    // 3. Insert daily_plan
+    // 3. Upsert daily_plan (handles race condition: two simultaneous requests
+    //    both see no plan → both try to insert → one gets 409 duplicate key)
     const { data: newPlan, error: planErr } = await supabase
       .from("daily_plans")
-      .insert({
-        user_id:    userId,
-        date:       today,
-        target_count: items.length,
+      .upsert({
+        user_id:         userId,
+        date:            today,
+        target_count:    items.length,
         completed_count: 0,
-      })
+      }, { onConflict: 'user_id,date', ignoreDuplicates: false })
       .select()
       .single();
 
