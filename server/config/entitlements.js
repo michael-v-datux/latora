@@ -32,6 +32,10 @@ const ENTITLEMENTS = {
     canCustomizePlan:    false,   // can user change plan size
     canRegenPlan:        false,   // can user regenerate plan mid-day
 
+    // Recommendations
+    maxRecsPerDay:       5,       // max recommendation words per day (UTC reset)
+    recsEnabled:         true,    // feature available (entry point shown)
+
     // Features (boolean flags)
     analyticsLevel:      'basic', // 'basic' | 'full'
     srsMode:             'basic', // 'basic' | 'advanced'
@@ -59,6 +63,10 @@ const ENTITLEMENTS = {
     dailyPlanSize:       30,      // words in today's queue (user can set 10–50)
     canCustomizePlan:    true,    // can user change plan size
     canRegenPlan:        true,    // can user regenerate plan mid-day
+
+    // Recommendations
+    maxRecsPerDay:       30,      // max recommendation words per day (UTC reset)
+    recsEnabled:         true,
 
     // Features
     analyticsLevel:      'full',

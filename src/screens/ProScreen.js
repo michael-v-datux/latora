@@ -100,6 +100,11 @@ const PRO_FEATURES = [
     titleKey: 'pro.feature_lang_analytics_title',
     descKey:  'pro.feature_lang_analytics_desc',
   },
+  {
+    icon: 'sparkles-outline',
+    titleKey: 'pro.feature_rec_title',
+    descKey:  'pro.feature_rec_desc',
+  },
 ];
 
 // ─── Free plan: what's included (so users feel value, not deprivation) ────────
@@ -113,6 +118,7 @@ const FREE_INCLUDES = [
   { icon: 'search-outline',    key: 'pro.free_search'    },
   { icon: 'filter-outline',    key: 'pro.free_cefr'      },
   { icon: 'bar-chart-outline', key: 'pro.free_wordstats' },
+  { icon: 'sparkles-outline',  key: 'pro.free_rec'      },
 ];
 
 // ─── Sub-components ───────────────────────────────────────────────────────────

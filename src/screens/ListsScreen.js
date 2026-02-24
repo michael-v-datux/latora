@@ -40,7 +40,10 @@ import {
 } from '../services/listsService';
 import { fetchSessionCounts, fetchListStatuses } from '../services/practiceService';
 import { fetchWordStats } from '../services/todayService';
+import { fetchRecQuota } from '../services/recommendationsService';
 import { useI18n } from '../i18n';
+import RecommendationsSetupScreen from './RecommendationsSetupScreen';
+import RecommendationsResultsScreen from './RecommendationsResultsScreen';
 
 // --- Helpers: normalize idiom fields coming from Supabase/HTTP ---
 // --- Helpers: normalize idiom fields coming from Supabase/HTTP ---
@@ -140,6 +143,27 @@ export default function ListsScreen({ navigation }) {
   const [wordStats, setWordStats] = useState(null);           // server response
   const [loadingStats, setLoadingStats] = useState(false);
 
+  // Recommendations flow
+  const [recSetupVisible, setRecSetupVisible] = useState(false);
+  const [recResultsVisible, setRecResultsVisible] = useState(false);
+  const [recResults, setRecResults] = useState(null);
+  const [recQuota, setRecQuota] = useState(null); // { used, max, left }
+
+  // Activation check: show entry point when user has ≥1 list, ≥5 total words, ≥1 practice session
+  const recActivationMet = useMemo(() => {
+    const totalWords = (lists || []).reduce((sum, l) => sum + (l.word_count || 0), 0);
+    const hasLists = (lists || []).length >= 1;
+    const hasWords = totalWords >= 5;
+    // lifetimeSessions is per-list; for activation we check globally via listProgressMap
+    const hasPractice = Object.values(listProgressMap || {}).some(s => (s.sessions || 0) >= 1);
+    return hasLists && hasWords && hasPractice;
+  }, [lists, listProgressMap]);
+
+  // Default lang pair for recommendations setup.
+  // Phase 2: fetch from profiles.source_lang + profiles.target_lang.
+  // For now: EN→UK (most common; user can change in setup screen).
+  const recDefaultLang = { sourceLang: 'EN', targetLang: 'UK' };
+
   const totals = useMemo(() => {
     const totalWords = (lists || []).reduce((sum, l) => sum + (l.word_count || 0), 0);
     const totalLists = (lists || []).length;
@@ -156,6 +180,8 @@ export default function ListsScreen({ navigation }) {
         fetchLists(),
         fetchListStatuses().catch(() => ({ statuses: {} })),
       ]);
+      // Also refresh rec quota in background (non-blocking)
+      fetchRecQuota().then(q => setRecQuota(q)).catch(() => {});
       // fetchLists now returns { lists, usage } (or legacy bare array)
       const listsArr = Array.isArray(fetchedData)
         ? fetchedData
@@ -1331,12 +1357,82 @@ export default function ListsScreen({ navigation }) {
                 >
                   <Text style={styles.newListText}>+ {t('lists.new_list_btn')}</Text>
                 </TouchableOpacity>
+
+                {/* ── Recommendations entry block ─────────────────────────── */}
+                <View style={styles.recEntryBlock}>
+                  <View style={styles.recEntryHeader}>
+                    <Ionicons name="sparkles-outline" size={16} color={COLORS.accent} />
+                    <Text style={styles.recEntryTitle}>{t('rec.entry_title')}</Text>
+                    {recQuota && recActivationMet && (
+                      <Text style={styles.recEntryQuota}>
+                        {recQuota.left > 0
+                          ? t('rec.entry_quota', { left: recQuota.left, max: recQuota.max })
+                          : t('rec.entry_quota_empty')}
+                      </Text>
+                    )}
+                  </View>
+                  <Text style={styles.recEntrySubtitle}>{t('rec.entry_subtitle')}</Text>
+
+                  {!recActivationMet ? (
+                    /* Activation progress */
+                    <View style={styles.recActivationRow}>
+                      <Text style={styles.recActivationHint}>{t('rec.entry_activation_hint')}</Text>
+                    </View>
+                  ) : (
+                    /* CTA button */
+                    <TouchableOpacity
+                      style={[
+                        styles.recEntryBtn,
+                        recQuota?.left === 0 && styles.recEntryBtnDisabled,
+                      ]}
+                      onPress={() => setRecSetupVisible(true)}
+                      activeOpacity={0.8}
+                      disabled={recQuota?.left === 0}
+                    >
+                      <Ionicons name="sparkles" size={14} color="#fff" />
+                      <Text style={styles.recEntryBtnText}>{t('rec.entry_btn')}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </>
             )}
           </>
         )}
 
         <View style={{ height: 40 }} />
+
+        {/* Recommendations modals */}
+        <RecommendationsSetupScreen
+          visible={recSetupVisible}
+          onClose={() => setRecSetupVisible(false)}
+          onResults={(results) => {
+            setRecResults(results);
+            setRecResultsVisible(true);
+          }}
+          lists={lists || []}
+          quota={recQuota}
+          isPro={isPro}
+          defaultLang={recDefaultLang}
+        />
+
+        <RecommendationsResultsScreen
+          visible={recResultsVisible}
+          onClose={() => {
+            setRecResultsVisible(false);
+            setRecSetupVisible(false);
+            setRecResults(null);
+            // Refresh quota after closing
+            fetchRecQuota().then(q => setRecQuota(q)).catch(() => {});
+          }}
+          onBack={() => {
+            setRecResultsVisible(false);
+          }}
+          results={recResults}
+          lists={lists || []}
+          onWordsAdded={() => {
+            loadLists({ silent: true });
+          }}
+        />
 
         {/* New list modal */}
         <Modal
@@ -1870,6 +1966,66 @@ const styles = StyleSheet.create({
     color: COLORS.textHint,
     marginTop: 8,
     fontStyle: 'italic',
+  },
+
+  // ─── Recommendations entry block ─────────────────────────────────────────
+  recEntryBlock: {
+    marginTop: 24,
+    marginBottom: 8,
+    backgroundColor: COLORS.surface,
+    borderRadius: BORDER_RADIUS.lg,
+    borderWidth: 1,
+    borderColor: '#bfdbfe', // light blue
+    padding: SPACING.md,
+    gap: 8,
+  },
+  recEntryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  recEntryTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+  },
+  recEntryQuota: {
+    fontSize: 11,
+    color: COLORS.accent,
+    fontWeight: '500',
+  },
+  recEntrySubtitle: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    lineHeight: 18,
+  },
+  recActivationRow: {
+    marginTop: 4,
+  },
+  recActivationHint: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    lineHeight: 17,
+    fontStyle: 'italic',
+  },
+  recEntryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: COLORS.accent,
+    borderRadius: BORDER_RADIUS.md,
+    paddingVertical: 11,
+    marginTop: 4,
+  },
+  recEntryBtnDisabled: {
+    backgroundColor: COLORS.textMuted,
+  },
+  recEntryBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
   },
 
 });
