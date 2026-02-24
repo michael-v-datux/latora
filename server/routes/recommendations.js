@@ -783,33 +783,49 @@ router.post('/recommendations/action', requireAuth, async (req, res, next) => {
         const srcLang = run?.source_lang || recWord.source_lang;
         const tgtLang = run?.target_lang || recWord.target_lang;
 
-        // Upsert into `words` table (dedup by original + source_lang + target_lang + translation)
-        const { data: promoted, error: promoteErr } = await supabaseAdmin
+        // Insert into `words` table — ignore conflict if an existing row (e.g. source='translated') already has this word.
+        // ignoreDuplicates: true prevents overwriting a high-quality 'translated' row with 'promoted' data.
+        const insertPayload = {
+          source_lang:             srcLang,
+          target_lang:             tgtLang,
+          original:                recWord.original,
+          translation:             recWord.translation,
+          transcription:           recWord.transcription || null,
+          cefr_level:              recWord.cefr_level || 'B1',
+          part_of_speech:          recWord.part_of_speech || 'other',
+          phrase_flag:             recWord.phrase_flag || false,
+          example_sentence_target: recWord.example_sentence_target || null,
+          definition:              recWord.definition || null,
+          definition_uk:           recWord.definition_uk || null,
+          frequency_band:          3,          // neutral default
+          base_score:              50,
+          confidence_score:        60,         // "provisional" quality gate
+          source:                  'promoted', // LLM-generated, user-validated — excluded from translate cache
+        };
+
+        let { data: promoted, error: promoteErr } = await supabaseAdmin
           .from('words')
-          .upsert({
-            source_lang:             srcLang,
-            target_lang:             tgtLang,
-            original:                recWord.original,
-            translation:             recWord.translation,
-            transcription:           recWord.transcription || null,
-            cefr_level:              recWord.cefr_level || 'B1',
-            part_of_speech:          recWord.part_of_speech || 'other',
-            phrase_flag:             recWord.phrase_flag || false,
-            example_sentence_target: recWord.example_sentence_target || null,
-            definition:              recWord.definition || null,
-            definition_uk:           recWord.definition_uk || null,
-            frequency_band:          3,          // neutral default
-            base_score:              50,
-            confidence_score:        60,         // "provisional" quality gate
-            source:                  'promoted', // LLM-generated, user-validated — excluded from translate cache
-          }, {
+          .upsert(insertPayload, {
             onConflict: 'original,source_lang,target_lang,translation',
-            ignoreDuplicates: false,            // return existing row if conflict
+            ignoreDuplicates: true,  // never overwrite an existing 'translated' word with 'promoted'
           })
           .select('id')
           .single();
 
-        if (!promoteErr && promoted?.id) {
+        // ignoreDuplicates returns null on conflict — fetch the existing row by unique key
+        if (!promoted?.id) {
+          const { data: existing } = await supabaseAdmin
+            .from('words')
+            .select('id')
+            .eq('original', recWord.original)
+            .eq('source_lang', srcLang)
+            .eq('target_lang', tgtLang)
+            .eq('translation', recWord.translation)
+            .single();
+          if (existing?.id) promoted = existing;
+        }
+
+        if (promoted?.id) {
           resolvedWordId = promoted.id;
 
           // Link the recommendation_item to its new word_id (so future references work)
@@ -825,9 +841,9 @@ router.post('/recommendations/action', requireAuth, async (req, res, next) => {
             .update({ add_count: (recWord.add_count || 0) + 1 })
             .eq('id', item.rec_word_id)
             .then(() => {});
-        } else if (promoteErr) {
-          console.warn('⚠️ [recommendations] word promotion failed:', promoteErr.message);
-          // Don't fail the whole request — fall through, word just won't be in list
+        } else {
+          if (promoteErr) console.warn('⚠️ [recommendations] word promotion failed:', promoteErr.message);
+          // Fall through — word won't be added to list this time, action is still recorded
         }
       }
     }
