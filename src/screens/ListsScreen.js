@@ -1503,7 +1503,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: SPACING.xl },
 
   // Header
-  header: { paddingTop: SPACING.lg, paddingBottom: SPACING.xxl },
+  header: { paddingTop: SPACING.lg, paddingBottom: SPACING.sm },
   title: { fontSize: 28, fontWeight: '400', color: COLORS.primary, letterSpacing: -0.5 },
   subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4 },
   subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 4 },
@@ -1986,7 +1986,7 @@ const styles = StyleSheet.create({
 
   // ─── Recommendations entry block ─────────────────────────────────────────
   recEntryBlock: {
-    marginTop: 24,
+    marginTop: 8,
     marginBottom: 8,
     backgroundColor: COLORS.surface,
     borderRadius: BORDER_RADIUS.lg,
