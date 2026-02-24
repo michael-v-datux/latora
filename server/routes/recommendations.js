@@ -801,6 +801,7 @@ router.post('/recommendations/action', requireAuth, async (req, res, next) => {
             frequency_band:          3,          // neutral default
             base_score:              50,
             confidence_score:        60,         // "provisional" quality gate
+            source:                  'promoted', // LLM-generated, user-validated — excluded from translate cache
           }, {
             onConflict: 'original,source_lang,target_lang,translation',
             ignoreDuplicates: false,            // return existing row if conflict

@@ -259,6 +259,7 @@ router.post('/translate', optionalAuth, async (req, res) => {
       .eq('original', cleanWord)
       .eq('source_lang', srcLang)
       .eq('target_lang', tgtLang)
+      .eq('source', 'translated')  // only high-quality translated cache; skip promoted LLM words
       .order('created_at', { ascending: true })
       .limit(1);
 
@@ -368,6 +369,8 @@ router.post('/translate', optionalAuth, async (req, res) => {
           : null,
         translation_notes: (idiom && idiom.is_idiom) ? idiom.note : null,
         translation_kind:  (idiom && idiom.is_idiom) ? 'idiom' : null,
+
+        source: 'translated',  // high-quality: came through DeepL + Claude pipeline
       };
 
       const { data: saved, error: saveError } = await supabaseAdmin
@@ -512,6 +515,7 @@ async function saveOneAlternative(primaryWord, alt, { sourceLang, targetLang }) 
       polysemy_level:   difficulty.polysemy_level,
       morph_complexity: difficulty.morph_complexity,
       phrase_flag:      difficulty.phrase_flag,
+      source:           'translated',  // high-quality: came through DeepL + Claude pipeline
     };
 
     // 2. Upsert у words (той самий original, інша translation)
