@@ -745,6 +745,109 @@ router.post('/recommendations/action', requireAuth, async (req, res, next) => {
       return res.status(400).json({ error: 'action must be added|hidden|skipped' });
     }
 
+    // Fetch the recommendation item (verify ownership + get word refs)
+    const { data: item, error: fetchErr } = await supabaseAdmin
+      .from('recommendation_items')
+      .select('id, run_id, user_id, word_id, rec_word_id, original, translation, transcription, cefr_level, part_of_speech, phrase_flag, example_sentence_target, definition, definition_uk')
+      .eq('id', itemId)
+      .eq('user_id', req.user.id) // ownership check
+      .single();
+
+    if (fetchErr || !item) {
+      return res.status(404).json({ error: 'Recommendation item not found' });
+    }
+
+    let resolvedWordId = item.word_id || null;
+
+    // ── LLM word promotion ────────────────────────────────────────────────────
+    // If action is 'added' and this is an LLM-generated word (rec_word_id, no word_id),
+    // promote it to the global `words` table so it can be added to a list.
+    if (action === 'added' && listId && !item.word_id && item.rec_word_id) {
+      // Fetch full word data from recommendation_words
+      const { data: recWord, error: recWordErr } = await supabaseAdmin
+        .from('recommendation_words')
+        .select('*')
+        .eq('id', item.rec_word_id)
+        .single();
+
+      if (recWord && !recWordErr) {
+        // Determine source/target lang from the recommendation run
+        const { data: run } = item.run_id
+          ? await supabaseAdmin
+              .from('recommendation_runs')
+              .select('source_lang, target_lang')
+              .eq('id', item.run_id)
+              .single()
+          : { data: null };
+
+        const srcLang = run?.source_lang || recWord.source_lang;
+        const tgtLang = run?.target_lang || recWord.target_lang;
+
+        // Upsert into `words` table (dedup by original + source_lang + target_lang + translation)
+        const { data: promoted, error: promoteErr } = await supabaseAdmin
+          .from('words')
+          .upsert({
+            source_lang:             srcLang,
+            target_lang:             tgtLang,
+            original:                recWord.original,
+            translation:             recWord.translation,
+            transcription:           recWord.transcription || null,
+            cefr_level:              recWord.cefr_level || 'B1',
+            part_of_speech:          recWord.part_of_speech || 'other',
+            phrase_flag:             recWord.phrase_flag || false,
+            example_sentence_target: recWord.example_sentence_target || null,
+            definition:              recWord.definition || null,
+            definition_uk:           recWord.definition_uk || null,
+            frequency_band:          3,          // neutral default
+            base_score:              50,
+            confidence_score:        60,         // "provisional" quality gate
+          }, {
+            onConflict: 'original,source_lang,target_lang,translation',
+            ignoreDuplicates: false,            // return existing row if conflict
+          })
+          .select('id')
+          .single();
+
+        if (!promoteErr && promoted?.id) {
+          resolvedWordId = promoted.id;
+
+          // Link the recommendation_item to its new word_id (so future references work)
+          supabaseAdmin
+            .from('recommendation_items')
+            .update({ word_id: resolvedWordId })
+            .eq('id', itemId)
+            .then(() => {});
+
+          // Increment add_count on recommendation_words (fire-and-forget)
+          supabaseAdmin
+            .from('recommendation_words')
+            .update({ add_count: (recWord.add_count || 0) + 1 })
+            .eq('id', item.rec_word_id)
+            .then(() => {});
+        } else if (promoteErr) {
+          console.warn('⚠️ [recommendations] word promotion failed:', promoteErr.message);
+          // Don't fail the whole request — fall through, word just won't be in list
+        }
+      }
+    }
+
+    // ── Add to list (for SQL words or newly promoted LLM words) ───────────────
+    if (action === 'added' && listId && resolvedWordId) {
+      // Use user-scoped supabase so RLS limits insertion to their own lists
+      const { error: addErr } = await req.supabase
+        .from('list_words')
+        .upsert({
+          list_id:  listId,
+          word_id:  resolvedWordId,
+        }, { onConflict: 'list_id,word_id', ignoreDuplicates: true });
+
+      if (addErr) {
+        console.warn('⚠️ [recommendations] list_words upsert failed:', addErr.message);
+        // Non-fatal — still record the recommendation action
+      }
+    }
+
+    // ── Update recommendation_items record ────────────────────────────────────
     const update = {
       user_action:  action,
       actioned_at:  new Date().toISOString(),
@@ -754,33 +857,13 @@ router.post('/recommendations/action', requireAuth, async (req, res, next) => {
       update.added_to_list_id = listId;
     }
 
-    // Verify ownership via user_id check before update
-    const { error } = await supabaseAdmin
+    await supabaseAdmin
       .from('recommendation_items')
       .update(update)
       .eq('id', itemId)
-      .eq('user_id', req.user.id); // ownership check
+      .eq('user_id', req.user.id);
 
-    if (error) throw error;
-
-    // If word was added and is from recommendation_words, increment add_count
-    if (action === 'added') {
-      const { data: item } = await supabaseAdmin
-        .from('recommendation_items')
-        .select('rec_word_id')
-        .eq('id', itemId)
-        .single();
-
-      if (item?.rec_word_id) {
-        supabaseAdmin
-          .from('recommendation_words')
-          .rpc('increment_add_count', { row_id: item.rec_word_id })
-          .then(() => {}) // fire-and-forget, ignore errors
-          .catch(() => {});
-      }
-    }
-
-    return res.json({ ok: true });
+    return res.json({ ok: true, wordId: resolvedWordId });
   } catch (e) {
     return next(e);
   }

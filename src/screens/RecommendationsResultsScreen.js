@@ -20,7 +20,6 @@ import {
   StyleSheet,
   FlatList,
   Modal,
-  ActivityIndicator,
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -28,7 +27,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useI18n } from '../i18n';
 import { COLORS, BORDER_RADIUS, SPACING, CEFR_COLORS } from '../utils/constants';
 import { recordRecommendationAction } from '../services/recommendationsService';
-import { addWordToList } from '../services/listsService';
 
 // ─── CEFR badge ───────────────────────────────────────────────────────────────
 function CefrTag({ level }) {
@@ -192,20 +190,10 @@ export default function RecommendationsResultsScreen({
     setItemActions(prev => ({ ...prev, [itemId]: action === 'hidden' ? 'hidden' : 'adding' }));
 
     try {
-      // If adding to list, call lists endpoint first
-      if (action === 'added' && listId) {
-        // Find the item to get its wordId
-        const item = items.find(i => i.id === itemId);
-        if (item?.wordId) {
-          await addWordToList(listId, item.wordId);
-        }
-        // Note: rec_word items (LLM-generated) don't have a wordId yet;
-        // they are staged in recommendation_words. Adding action is recorded
-        // but word won't appear in list until Phase 2 (promotion to global words).
-        // For now, we still record the action for analytics.
-      }
-
-      // Record action in recommendations DB
+      // recordRecommendationAction handles everything server-side:
+      // - For LLM words (rec_word_id): promotes to global `words` table, then adds to list
+      // - For SQL words (word_id): adds directly to list
+      // - For hide/skip: just records the action
       await recordRecommendationAction(itemId, action, listId);
 
       setItemActions(prev => ({ ...prev, [itemId]: action }));
@@ -217,7 +205,7 @@ export default function RecommendationsResultsScreen({
       setItemActions(prev => ({ ...prev, [itemId]: 'pending' }));
       Alert.alert(t('common.error'), t('rec.error_action'));
     }
-  }, [items, onWordsAdded, t]);
+  }, [onWordsAdded, t]);
 
   const strategy = results?.strategy;
   const strategyIcon = strategy === 'llm' ? 'sparkles-outline'

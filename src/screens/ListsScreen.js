@@ -154,8 +154,12 @@ export default function ListsScreen({ navigation }) {
     const totalWords = (lists || []).reduce((sum, l) => sum + (l.word_count || 0), 0);
     const hasLists = (lists || []).length >= 1;
     const hasWords = totalWords >= 5;
-    // lifetimeSessions is per-list; for activation we check globally via listProgressMap
-    const hasPractice = Object.values(listProgressMap || {}).some(s => (s.sessions || 0) >= 1);
+    // listProgressMap contains sessions_today per list (from fetchListStatuses).
+    // We use sessions_today > 0 OR any list has words reviewed (total > due means progress was made).
+    // This way activation works even if user practiced on a previous day (due < total).
+    const hasPractice = Object.values(listProgressMap || {}).some(
+      s => (s.sessions_today || 0) >= 1 || (s.total > 0 && (s.total - (s.due ?? s.total)) > 0)
+    );
     return hasLists && hasWords && hasPractice;
   }, [lists, listProgressMap]);
 
