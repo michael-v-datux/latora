@@ -148,6 +148,7 @@ export default function ListsScreen({ navigation }) {
   const [recResultsVisible, setRecResultsVisible] = useState(false);
   const [recResults, setRecResults] = useState(null);
   const [recQuota, setRecQuota] = useState(null); // { used, max, left }
+  const [lastSeenLangPair, setLastSeenLangPair] = useState(null); // { sourceLang, targetLang }
 
   // Activation check: show entry point when user has ≥1 list, ≥5 total words, ≥1 practice session
   const recActivationMet = useMemo(() => {
@@ -164,9 +165,9 @@ export default function ListsScreen({ navigation }) {
   }, [lists, listProgressMap]);
 
   // Default lang pair for recommendations setup.
-  // Phase 2: fetch from profiles.source_lang + profiles.target_lang.
-  // For now: EN→UK (most common; user can change in setup screen).
-  const recDefaultLang = { sourceLang: 'EN', targetLang: 'UK' };
+  // Uses the last list the user opened (persists after going back to all-lists view).
+  // Falls back to EN→UK; user can always change in Setup screen.
+  const recDefaultLang = lastSeenLangPair || { sourceLang: 'EN', targetLang: 'UK' };
 
   const totals = useMemo(() => {
     const totalWords = (lists || []).reduce((sum, l) => sum + (l.word_count || 0), 0);
@@ -260,6 +261,19 @@ export default function ListsScreen({ navigation }) {
       }));
       setSelectedWords(words);
       setLifetimeSessions(sessionData?.counts?.[list.id] || 0);
+      // Remember dominant lang pair for recommendations default
+      const pairCounts = {};
+      for (const w of words) {
+        if (w.source_lang && w.target_lang) {
+          const k = `${w.source_lang}|${w.target_lang}`;
+          pairCounts[k] = (pairCounts[k] || 0) + 1;
+        }
+      }
+      const topPair = Object.entries(pairCounts).sort((a, b) => b[1] - a[1])[0];
+      if (topPair) {
+        const [src, tgt] = topPair[0].split('|');
+        setLastSeenLangPair({ sourceLang: src, targetLang: tgt });
+      }
     } catch (e) {
       console.warn('Failed to fetch list details:', e?.message);
       Alert.alert('Помилка', 'Не вдалося завантажити слова списку');
