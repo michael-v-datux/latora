@@ -37,6 +37,13 @@
           "color": "#0f172a",
           "sounds": []
         }
+      ],
+      [
+        "@sentry/react-native/expo",
+        {
+          "organization": "lexum",
+          "project": "lexum-ios"
+        }
       ]
     ]
   }

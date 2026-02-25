@@ -32,6 +32,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useI18n } from '../i18n';
 import { COLORS, BORDER_RADIUS, SPACING } from '../utils/constants';
 import { generateRecommendations } from '../services/recommendationsService';
+import { trackEvent, Events } from '../services/analytics';
 
 // ─── Option pill ──────────────────────────────────────────────────────────────
 function OptionPill({ label, selected, onPress, disabled }) {
@@ -130,6 +131,12 @@ export default function RecommendationsSetupScreen({
         count: Math.min(count, maxCount),
       });
 
+      trackEvent(Events.RECOMMENDATION_GENERATED, {
+        strategy: result.strategy,
+        count:    result.items?.length ?? 0,
+        mode,
+        lang_pair: `${sourceLang}-${targetLang}`,
+      });
       onResults(result);
     } catch (e) {
       const errorCode = e?.response?.data?.errorCode;

@@ -36,6 +36,7 @@ import {
   purchasePackage,
   restorePurchases,
 } from '../services/purchaseService';
+import { trackEvent, Events } from '../services/analytics';
 
 // ─── Feature list (what Pro unlocks/upgrades) ────────────────────────────────
 
@@ -234,6 +235,10 @@ export default function ProScreen({ navigation }) {
     loadOfferings();
   }, [loadOfferings]);
 
+  useEffect(() => {
+    trackEvent(Events.PRO_SCREEN_VIEWED);
+  }, []);
+
   // ── Purchase ────────────────────────────────────────────────────────────────
   const handlePurchase = useCallback(async () => {
     const pkg = selectedPkg === 'yearly' ? offerings.yearly : offerings.monthly;
@@ -249,6 +254,10 @@ export default function ProScreen({ navigation }) {
       }
 
       if (result.success && result.isPro) {
+        trackEvent(Events.SUBSCRIPTION_CONVERTED, {
+          product_id: pkg.product.identifier,
+          plan: 'pro',
+        });
         // Success — navigate back and let ProfileScreen refresh
         Alert.alert(
           t('pro.success_title'),

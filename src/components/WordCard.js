@@ -53,18 +53,47 @@ function localisePOS(pos, locale) {
 // ─── Helper: підсвічування слова у прикладі ───────────────────────────────────
 
 /**
- * Розбиває речення на частини, виділяючи точний збіг (case-insensitive).
- * Повертає масив { text, highlight }.
+ * Splits a sentence into parts, highlighting the given word (case-insensitive).
+ *
+ * Pass 1 — exact match (works for EN and any language where the exact form appears).
+ * Pass 2 — stem-based fallback for morphologically rich languages (Ukrainian, etc.):
+ *   e.g. "ефемерний" → stem "ефемер" → matches "ефемерного", "ефемерних", "ефемерній" …
+ *
+ * Returns array of { text, highlight }.
  */
 function highlightWord(sentence, word) {
   if (!sentence || !word) return [{ text: sentence || '', highlight: false }];
-  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regex   = new RegExp(`(${escaped})`, 'gi');
-  const parts   = sentence.split(regex);
-  return parts.map((part) => ({
-    text:      part,
-    highlight: part.toLowerCase() === word.toLowerCase(),
-  }));
+
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // ── Pass 1: exact case-insensitive match ─────────────────────────────────
+  const exactParts = sentence.split(new RegExp(`(${esc(word)})`, 'gi'));
+  if (exactParts.some(p => p.toLowerCase() === word.toLowerCase())) {
+    return exactParts.map(part => ({
+      text:      part,
+      highlight: part.toLowerCase() === word.toLowerCase(),
+    }));
+  }
+
+  // ── Pass 2: stem-based fallback (single words only, length > 5) ──────────
+  // Word chars: Latin + Cyrillic + Ukrainian apostrophes
+  const WORD_CHARS = '[\\wа-яА-ЯіІїЇєЄґҐ\u2019\'ʼ]*';
+  const isSingleWord = !word.includes(' ');
+  if (isSingleWord && word.length > 5) {
+    const stem      = word.slice(0, Math.max(4, word.length - 3));
+    const stemParts = sentence.split(new RegExp(`(${esc(stem)}${WORD_CHARS})`, 'gi'));
+    const lowerStem = stem.toLowerCase();
+    // Only highlight matches longer than the stem itself (actual inflected forms)
+    if (stemParts.some(p => p.toLowerCase().startsWith(lowerStem) && p.length > stem.length)) {
+      return stemParts.map(part => ({
+        text:      part,
+        highlight: part.toLowerCase().startsWith(lowerStem) && part.length > stem.length,
+      }));
+    }
+  }
+
+  // ── No match found — return plain text ───────────────────────────────────
+  return [{ text: sentence, highlight: false }];
 }
 
 // ─── Helpers: idiom fields ────────────────────────────────────────────────────

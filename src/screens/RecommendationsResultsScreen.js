@@ -27,6 +27,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useI18n } from '../i18n';
 import { COLORS, BORDER_RADIUS, SPACING, CEFR_COLORS } from '../utils/constants';
 import { recordRecommendationAction } from '../services/recommendationsService';
+import { trackEvent, Events } from '../services/analytics';
 
 // ─── CEFR badge ───────────────────────────────────────────────────────────────
 function CefrTag({ level }) {
@@ -198,8 +199,9 @@ export default function RecommendationsResultsScreen({
 
       setItemActions(prev => ({ ...prev, [itemId]: action }));
 
-      if (action === 'added' && onWordsAdded) {
-        onWordsAdded(1);
+      if (action === 'added') {
+        trackEvent(Events.RECOMMENDATION_WORD_ADDED);
+        if (onWordsAdded) onWordsAdded(1);
       }
     } catch (e) {
       setItemActions(prev => ({ ...prev, [itemId]: 'pending' }));

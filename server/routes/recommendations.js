@@ -300,6 +300,7 @@ Intent: ${intentHint}${seedHint}${excludeHint}
 
 Rules:
 - Each item must be a realistic, useful vocabulary item a learner at this level would want to know
+- ALL ${count} items must have UNIQUE 'original' values — never repeat the same word or phrase
 - Provide translation in ${targetLang}
 - Include a short example sentence IN ${sourceLang} (the language being learned)
 - reason_code must be one of: cefr_fit, topic_match, high_frequency, phrase_needed, gap_fill, explore, llm_curated
@@ -333,8 +334,16 @@ Respond ONLY with a valid JSON array of exactly ${count} items:
 
     if (!Array.isArray(parsed)) return [];
 
+    const seenOriginals = new Set();
     return parsed
       .filter(item => item && typeof item.original === 'string' && typeof item.translation === 'string')
+      .filter(item => {
+        // Deduplicate by original — LLM sometimes repeats the same word with different translations
+        const key = String(item.original).trim().toLowerCase();
+        if (seenOriginals.has(key)) return false;
+        seenOriginals.add(key);
+        return true;
+      })
       .slice(0, count)
       .map(item => ({
         original:               String(item.original || '').trim().toLowerCase(),

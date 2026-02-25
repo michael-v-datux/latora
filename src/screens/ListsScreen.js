@@ -1423,7 +1423,12 @@ export default function ListsScreen({ navigation }) {
           onClose={() => setRecSetupVisible(false)}
           onResults={(results) => {
             setRecResults(results);
+            setRecSetupVisible(false);   // close Setup first — only one pageSheet at a time
             setRecResultsVisible(true);
+            // Update quota immediately from server response (no extra API call)
+            if (results?.quotaLeft !== undefined) {
+              setRecQuota({ used: results.quotaUsed, max: results.quotaMax, left: results.quotaLeft });
+            }
           }}
           lists={lists || []}
           quota={recQuota}
@@ -1442,6 +1447,7 @@ export default function ListsScreen({ navigation }) {
           }}
           onBack={() => {
             setRecResultsVisible(false);
+            setRecSetupVisible(true);  // reopen Setup so user can adjust and retry
           }}
           results={recResults}
           lists={lists || []}
